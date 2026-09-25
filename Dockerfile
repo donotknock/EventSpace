@@ -38,7 +38,7 @@ ENV DATABASE_URL="file:/app/data/eventspace.db"
 # Install backend dependencies
 COPY backend/package*.json ./
 COPY backend/prisma ./prisma/
-RUN npm install && npx prisma generate
+RUN npm install --include=dev && npx prisma generate
 
 # Build backend TypeScript
 COPY backend/ ./
