@@ -5,7 +5,7 @@ FROM node:22-alpine AS frontend-builder
 WORKDIR /build/frontend
 
 COPY frontend/package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY frontend/ ./
 RUN npm run build
@@ -17,7 +17,7 @@ FROM node:22-alpine AS mobile-builder
 WORKDIR /build/mobile
 
 COPY eventspace-mobile/package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY eventspace-mobile/ ./
 RUN npm run build
@@ -38,7 +38,7 @@ ENV DATABASE_URL="file:/app/data/eventspace.db"
 # Install backend dependencies
 COPY backend/package*.json ./
 COPY backend/prisma ./prisma/
-RUN npm ci && npx prisma generate
+RUN npm install && npx prisma generate
 
 # Build backend TypeScript
 COPY backend/ ./
