@@ -1,0 +1,22 @@
+{
+  "name": "EventSpace Mobile",
+  "short_name": "EventSpace",
+  "description": "EventSpace Mobile Companion",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0f19",
+  "theme_color": "#0b0f19",
+  "icons": [
+    {
+      "src": "/icon-dark.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-light.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

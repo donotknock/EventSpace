@@ -1,0 +1,19 @@
+services:
+  eventspace:
+    image: eventspace/eventspace:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eventspace
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - PUID=${PUID:-99}
+      - PGID=${PGID:-100}
+      - COMPANION_PIN=${COMPANION_PIN:-EVSP-9482}
+      - DATABASE_URL=file:/app/data/eventspace.db
+    volumes:
+      - ./data:/app/data

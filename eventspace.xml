@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>EventSpace</Name>
+  <Repository>eventspace/eventspace:latest</Repository>
+  <Registry>https://hub.docker.com/r/eventspace/eventspace</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/eventspace/eventspace/issues</Support>
+  <Project>https://github.com/eventspace/eventspace</Project>
+  <Overview>EventSpace: A spatial, touch-friendly event management dashboard designed for visual thinkers. Combines freeform node graph canvas mapping with structured event logistics, overarching department checklists (FM, AV, CT), friction log tracking, OpenDyslexic accessibility typography, and unified single-port web/API serving. Includes instant pairing with the eventspace-mobile companion app for quick photo capture and AI audio summarization.</Overview>
+  <Category>Productivity: Tools: Organizer: MediaApp:Video</Category>
+  <WebUI>http://[IP]:[PORT:3000]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/eventspace/unraid-templates/main/eventspace.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/eventspace/eventspace/main/frontend/public/EventSpace-Icon-Lightmode.png</Icon>
+  
+  <Config Name="WebUI &amp; API Port" Target="3000" Default="3000" Mode="tcp" Description="Unified container port serving both the WebUI canvas and REST API" Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="App Data" Target="/app/data" Default="/mnt/user/appdata/eventspace" Mode="rw" Description="Persistent host directory for SQLite database storage (runs in WAL mode)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/eventspace</Config>
+  <Config Name="Mobile Companion PIN" Target="COMPANION_PIN" Default="EVSP-9482" Mode="" Description="Security PIN required to pair the mobile companion app with this EventSpace instance" Type="Variable" Display="always" Required="false" Mask="false">EVSP-9482</Config>
+  <Config Name="Internal Port" Target="PORT" Default="3000" Mode="" Description="Internal Express listening port (must match container port target)" Type="Variable" Display="advanced" Required="false" Mask="false">3000</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Container user ID (Unraid standard: nobody=99)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Container group ID (Unraid standard: users=100)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+</Container>

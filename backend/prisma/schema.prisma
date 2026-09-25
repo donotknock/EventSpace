@@ -1,0 +1,116 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Event {
+  id           String          @id @default(uuid())
+  title        String
+  department   String?
+  term         String?
+  year         String?
+  startDate    DateTime?
+  endDate      DateTime?
+  priority     String?         @default("med") // "high", "med", "low", or null
+  isMuted      Boolean         @default(false)
+  isCompleted  Boolean         @default(false)
+  isTemplate   Boolean         @default(false)
+  deletedAt    DateTime?
+
+  // Persistent canvas viewport coordinates and scale
+  viewportX    Float           @default(0)
+  viewportY    Float           @default(0)
+  viewportZoom Float           @default(1)
+
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  nodes        CanvasNode[]
+  edges        CanvasEdge[]
+  checklists   ChecklistItem[]
+  frictionLogs FrictionLog[]
+  contacts     Contact[]
+}
+
+model Contact {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  role      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events    Event[]
+}
+
+model CanvasNode {
+  id          String    @id @default(uuid())
+  eventId     String
+  type        String    @default("task") // "task", "info", "chaser", "note", "picture"
+  xPosition   Float
+  yPosition   Float
+  title       String
+  content     String?
+  isCompleted Boolean   @default(false)
+  dueDate     DateTime?
+  assignee    String?
+  priority    String?   // "high", "med", "low"
+  metadata    String?   // JSON string storing bullet lists, tags, or extra fields
+  deletedAt   DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model CanvasEdge {
+  id           String   @id @default(uuid())
+  eventId      String
+  sourceId     String
+  targetId     String
+  sourceHandle String?
+  targetHandle String?
+  type         String?  @default("smoothstep")
+  animated     Boolean  @default(false)
+  label        String?
+
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model ChecklistItem {
+  id          String   @id @default(uuid())
+  eventId     String
+  category    String   // "FM", "AV", "Sodexo" (or custom)
+  content     String
+  isCompleted Boolean  @default(false)
+  order       Int      @default(0)
+  deletedAt   DateTime?
+
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model FrictionLog {
+  id          String   @id @default(uuid())
+  eventId     String
+  title       String
+  description String?
+  severity    String   @default("medium") // "low", "medium", "critical", "none"
+  resolved    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}

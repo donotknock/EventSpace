@@ -1,0 +1,159 @@
+@import '@xyflow/react/dist/style.css';
+@import url('https://fonts.cdnfonts.com/css/opendyslexic');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'OpenDyslexic';
+  src: url('https://cdn.jsdelivr.net/npm/opendyslexic@0.91.4/open-dyslexic/OpenDyslexic-Regular.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Global Dyslexic mode override */
+html.font-dyslexic,
+html.font-dyslexic body,
+html.font-dyslexic #root,
+html.font-dyslexic div,
+html.font-dyslexic span,
+html.font-dyslexic p,
+html.font-dyslexic h1,
+html.font-dyslexic h2,
+html.font-dyslexic h3,
+html.font-dyslexic h4,
+html.font-dyslexic button,
+html.font-dyslexic input,
+html.font-dyslexic textarea,
+html.font-dyslexic select {
+  font-family: 'OpenDyslexic', 'Comic Sans MS', sans-serif !important;
+  letter-spacing: 0.02em;
+}
+
+/* High contrast accessibility mode */
+html.high-contrast {
+  --tw-border-opacity: 1 !important;
+  filter: contrast(125%);
+}
+
+html.high-contrast body {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+/* Touch & canvas optimization */
+.react-flow__pane {
+  cursor: grab;
+}
+.react-flow__pane:active {
+  cursor: grabbing;
+}
+
+/* ReactFlow Controls Dark Mode & High Contrast overrides */
+.dark .react-flow__controls,
+.high-contrast .react-flow__controls {
+  background-color: #1f2937 !important; /* bg-gray-800 */
+  border: 1px solid #374151 !important; /* border-gray-700 */
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden !important;
+}
+
+.dark .react-flow__controls-button,
+.high-contrast .react-flow__controls-button {
+  background-color: #1f2937 !important; /* bg-gray-800 */
+  border-bottom: 1px solid #374151 !important;
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
+
+.dark .react-flow__controls-button:hover,
+.high-contrast .react-flow__controls-button:hover {
+  background-color: #374151 !important; /* bg-gray-700 */
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
+
+.dark .react-flow__controls-button svg,
+.high-contrast .react-flow__controls-button svg {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+
+.dark .react-flow__controls-button svg path,
+.high-contrast .react-flow__controls-button svg path {
+  fill: currentColor !important;
+}
+
+/* High-contrast and dark mode calendar picker indicator override */
+input[type="date"] {
+  color-scheme: light;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.75;
+  filter: none;
+}
+
+.dark input[type="date"] {
+  color-scheme: dark;
+}
+
+.dark input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1 !important;
+  filter: brightness(0) invert(1) !important; /* Pure crisp white calendar icon strictly in dark mode */
+}
+
+/* Full-bleed hit area for date badge inputs across all browsers */
+input.badge-date-input {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0 !important;
+  cursor: pointer !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 10 !important;
+}
+
+input.badge-date-input::-webkit-calendar-picker-indicator {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0 !important;
+  cursor: pointer !important;
+  background: transparent !important;
+  color: transparent !important;
+}
+
+/* Locate animation when panning to search results / schedule items */
+@keyframes locate-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0px var(--locate-color, rgba(59, 130, 246, 0.7));
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 35px 8px var(--locate-color, rgba(59, 130, 246, 0.95));
+    transform: scale(1.04);
+  }
+}
+
+.animate-locate-highlight {
+  animation: locate-pulse 0.7s ease-in-out 3;
+  z-index: 50 !important;
+}
+
+/* Omnidirectional single-dot connection handling: allow targets to receive drops while connecting */
+.react-flow--connecting .react-flow__handle-source {
+  pointer-events: none !important;
+}
+
