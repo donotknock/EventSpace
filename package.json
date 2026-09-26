@@ -1,6 +1,8 @@
 {
   "name": "eventspace-monorepo",
   "version": "1.0.0",
+  "author": "donotknock",
+  "homepage": "https://donotknock.app",
   "private": true,
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",

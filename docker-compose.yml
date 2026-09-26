@@ -1,6 +1,6 @@
 services:
   eventspace:
-    image: eventspace/eventspace:latest
+    image: donotknock/eventspace:latest
     build:
       context: .
       dockerfile: Dockerfile

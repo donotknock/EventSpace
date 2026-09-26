@@ -2,6 +2,8 @@
   "name": "eventspace-mobile",
   "private": true,
   "version": "1.0.0",
+  "author": "donotknock",
+  "homepage": "https://donotknock.app",
   "type": "module",
   "scripts": {
     "dev": "vite --port 5174 --host",

@@ -86,7 +86,7 @@ docker run -d \
   -e PUID=99 \
   -e PGID=100 \
   -e COMPANION_PIN=EVSP-9482 \
-  eventspace/eventspace:latest
+  donotknock/eventspace:latest
 ```
 
 * Open the **Web Canvas**: `http://<your-host-ip>:3000/`
@@ -101,7 +101,7 @@ Create a `docker-compose.yml` file:
 ```yaml
 services:
   eventspace:
-    image: eventspace/eventspace:latest
+    image: donotknock/eventspace:latest
     container_name: eventspace
     restart: unless-stopped
     ports:
@@ -203,6 +203,15 @@ npm run dev              # Runs on http://localhost:5174
 
 ---
 
+## 👨‍💻 Author & Project
+
+Created and maintained by **[donotknock](https://donotknock.app)**.
+
+* Website: [donotknock.app](https://donotknock.app)
+* GitHub: [@donotknock](https://github.com/donotknock)
+
+---
+
 ## 📄 License
 
-MIT © 2026 EventSpace Contributors.
+MIT © 2026 [donotknock](https://donotknock.app). All rights reserved.

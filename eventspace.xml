@@ -1,12 +1,13 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>EventSpace</Name>
+  <Author>donotknock</Author>
   <Repository>donotknock/eventspace:latest</Repository>
   <Registry>https://hub.docker.com/r/donotknock/eventspace</Registry>
   <Network>bridge</Network>
   <Privileged>false</Privileged>
   <Support>https://github.com/donotknock/EventSpace/issues</Support>
-  <Project>https://github.com/donotknock/EventSpace</Project>
+  <Project>https://donotknock.app</Project>
   <Overview>EventSpace: A spatial, touch-friendly event management dashboard designed for visual thinkers. Combines freeform node graph canvas mapping with structured event logistics, overarching department checklists (FM, AV, CT), friction log tracking, OpenDyslexic accessibility typography, and unified single-port web/API serving. Includes instant pairing with the eventspace-mobile companion app for quick photo capture and AI audio summarization.</Overview>
   <Category>Productivity: Tools: Organizer: MediaApp:Video</Category>
   <WebUI>http://[IP]:[PORT:3000]</WebUI>
