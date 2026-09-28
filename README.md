@@ -11,37 +11,27 @@ EventSpace transforms event coordination by combining a freeform spatial canvas 
 
 ## 🌟 Key Features
 
+* **Multi-Tenant Workspace & Security (New in v1.1.0):**
+  * **Role-Based Access Control (RBAC):** Assign Admin, Editor, and Viewer permissions. Viewers have strict read-only access (canvas lock).
+  * **Event Isolation & Sharing:** Events are completely private to the creator's workspace until explicitly shared with other registered users. 
+  * **Secure Authentication:** JWT-based authentication via secure HTTP-only cookies.
 * **Spatial Canvas Architecture (`@xyflow/react` v12):**
   * Freeform drag-and-drop node graph with directional connectors and autosaving coordinates.
   * Specialized building block types:
     * `TaskNode`: Checklists, subtasks, priority indicators, and native date picker badges.
     * `ChaserNode`: Vendor liaisons, point-of-contact tracking, and follow-up deadlines.
-    * `InfoNode`: Meeting minutes, briefings, and structured bullet lists.
-    * `NoteNode`: Flexible text scratchpads and reference notes.
+    * `InfoNode`: Meeting minutes, structured bullet lists, and automatic Excel/Sheets markdown table parsing.
+    * `VenueNode`: Dedicated logistics block for Setup/Teardown times, location dropdowns, and facility manager contacts.
     * `PictureNode`: High-resolution floor/stage photo cards with fullscreen lightbox and replace capability.
     * `AudioNode`: Voice recording blocks with waveform player, seekbar, and client-side AI transcription + bullet-point summarization.
-  * Persistent canvas viewport (pan position and zoom scale) saved automatically per event.
-  * Context menu: Right-click anywhere on the empty canvas to spawn any building block.
-* **Overarching Fixed Department Checklists:**
-  * Pinned top-of-screen cards for **Facilities Management (FM)**, **Audio/Visual (AV)**, and **Catering (CT)**.
-  * Real-time checkbox state synchronization backed by SQLite.
-  * Collapsible container to maximize canvas workspace.
-* **Slide-Out Friction Log (Right Pull-Out Drawer):**
-  * Dedicated drawer to record, triage, and resolve event bottlenecks, vendor delays, and equipment issues.
-* **Multi-Dimensional Navigation Rail:**
-  * Filter events across **Year**, **Department**, and **Term**.
-  * Traffic-light priority status indicators (High: Red, Medium: Yellow, Low: Green).
-  * Quick event muting, archiving, and soft-delete trash bin with full restore support.
-* **Master Tasks Aggregation Modal:**
-  * Global cross-event view of all pending tasks and checklist items sorted by due date and urgency.
-* **Accessibility & Personalization:**
-  * Native **OpenDyslexic** typography toggle ("T" button in navigation bar).
-  * High-contrast mode and system dark/light theme switching.
+    * `VideoNode`: HTML5 video player and auto-parsing YouTube/Vimeo embeds.
+* **Global Directories & Overarching Checklists:**
+  * **Template & Venue Management:** Dedicated global directories to save, edit, and duplicate event templates and reusable venue profiles.
+  * **Resizable Overarching Checklists:** Pinned top-of-screen cards for global departments (FM, AV, CT, Communications). Drag-to-resize heights and `@dnd-kit` powered drag-and-drop reordering.
 * **Mobile Companion App (`eventspace-mobile` hosted at `/companion`):**
   * Touch-first mobile web app optimized for smartphones and tablets on the event floor.
-  * Ultra-compact Quick Capture carousel with centered cards for instantaneous block creation.
-  * Direct device camera integration for floor photo capture into canvas Picture blocks.
-  * In-browser voice recording with offline AI whisper transcription and bullet-point summaries.
+  * **Transient 6-Digit Pairing:** Secure, device-specific pairing codes with live 5-minute countdowns.
+  * Ultra-compact Quick Capture carousel for instantaneous block creation (including direct camera/video capture).
   * "Web Canvas" deep link that dynamically jumps straight to the active event on the main desktop canvas.
 
 ---
@@ -57,7 +47,7 @@ EventSpace builds both Vite apps into a single production Docker image. The inte
 | **`/mobile`** | **Mobile Redirect** | Convenience alias redirecting directly to `/companion/` |
 | **`/api/*`** | **REST API** | Unified backend routes backed by SQLite in WAL mode |
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │              EventSpace Unified Container (:3000)               │
 │                                                                 │
@@ -85,7 +75,8 @@ docker run -d \
   -v /path/to/host/data:/app/data \
   -e PUID=99 \
   -e PGID=100 \
-  -e COMPANION_PIN=EVSP-9482 \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=password123 \
   donotknock/eventspace:latest
 ```
 
@@ -111,7 +102,8 @@ services:
       - NODE_ENV=production
       - PUID=99
       - PGID=100
-      - COMPANION_PIN=EVSP-9482
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=password123
       - DATABASE_URL=file:/app/data/eventspace.db
     volumes:
       - ./data:/app/data
@@ -128,13 +120,14 @@ docker compose up -d
 
 EventSpace includes a pre-configured Unraid XML template (`eventspace.xml`):
 
-1. Install via Unraid Community Applications (or copy `eventspace.xml` to `/boot/config/plugins/dockerMan/templates-user/eventspace.xml`).
+1. Install via Unraid Community Applications.
 2. Parameters in the Unraid WebGUI:
    * **WebUI & API Port:** `3000` (hosts `/` and `/companion`)
    * **App Data Path:** `/mnt/user/appdata/eventspace` (mapped to `/app/data`)
-   * **Mobile Companion PIN:** `EVSP-9482` (or your chosen security PIN)
+   * **Admin Username:** `admin` (or your preferred setup username)
+   * **Admin Password:** `password123` (Change immediately upon logging in!)
    * **PUID / PGID:** `99` / `100` (standard Unraid `nobody:users` permissions)
-3. Click **Apply**. The container boots, runs database migrations, and automatically seeds the interactive tutorial onboarding event on first startup.
+3. Click **Apply**. The container boots, runs database migrations, and automatically seeds the initial admin user and interactive tutorial.
 
 ---
 
@@ -143,15 +136,11 @@ EventSpace includes a pre-configured Unraid XML template (`eventspace.xml`):
 1. **Access the Companion App:**
    * On your phone or tablet connected to your local network, navigate to:
      `http://<your-server-ip>:3000/companion`
-   * The server URL automatically defaults to your current address (`http://<your-server-ip>:3000`).
-2. **Enter Your Pairing PIN:**
-   * In the desktop Web Canvas, click the **Settings** (⚙️ gear icon) in the header to view your Mobile Companion PIN (default: `EVSP-9482`).
-   * Enter the PIN on your mobile device and tap **Connect & Pair**.
-3. **Features on the Floor:**
-   * **Quick Capture:** Tap **Task**, **Chaser**, **Info**, **Audio**, or **Picture** in the centered carousel to instantly log items into the active event.
-   * **Floor Photos:** Tap **Picture** to open your mobile camera and snap staging, seating, or catering photos directly into the canvas.
-   * **Voice Memos:** Tap **Audio** to record voice briefings. The app transcribes the recording and extracts bulleted action points.
-   * **Web Canvas Deep Link:** Tap **Web Canvas** in the event view header to open the desktop canvas focused directly on that event.
+2. **Generate a Pairing Code:**
+   * Log into the desktop Web Canvas, open **Settings** (⚙️ gear icon), and navigate to the **Mobile Companion** tab.
+   * Click **Generate Pairing Code**. You will receive a unique, transient 6-digit code valid for 5 minutes.
+3. **Connect & Pair:**
+   * Enter the 6-digit code on your mobile device and tap **Connect & Pair**. The connection is device-specific and can be revoked at any time from the desktop settings.
 
 ---
 
@@ -162,7 +151,8 @@ EventSpace includes a pre-configured Unraid XML template (`eventspace.xml`):
 | `PORT` | `3000` | Unified container port hosting `/` (WebUI), `/companion` (Mobile), and `/api` |
 | `NODE_ENV` | `production` | Node runtime environment |
 | `DATABASE_URL` | `file:/app/data/eventspace.db` | SQLite database file location |
-| `COMPANION_PIN` | `EVSP-9482` | Verification PIN required to pair mobile devices |
+| `ADMIN_USERNAME` | `admin` | Initial administrator username seeded on first startup |
+| `ADMIN_PASSWORD` | `password123` | Initial administrator password seeded on first startup |
 | `PUID` | `99` | Container process user ID (Unraid standard: `nobody=99`) |
 | `PGID` | `100` | Container process group ID (Unraid standard: `users=100`) |
 
@@ -171,7 +161,7 @@ EventSpace includes a pre-configured Unraid XML template (`eventspace.xml`):
 ## 🛠️ Local Development
 
 ### Repository Structure
-```
+```text
 EventSpace/
 ├── backend/            # Express REST API, Prisma ORM, SQLite DB
 ├── frontend/           # Vite + React 19 spatial canvas WebUI (root /)
@@ -209,6 +199,8 @@ Created and maintained by **[donotknock](https://donotknock.app)**.
 
 * Website: [donotknock.app](https://donotknock.app)
 * GitHub: [@donotknock](https://github.com/donotknock)
+* Support: [Unraid Community Forums](https://forums.unraid.net/topic/200695-support-eventspace/)
+* Donate: [Ko-fi](https://ko-fi.com/donotknock)
 
 ---
 
