@@ -1,10 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { NodeType } from '../../types';
-import { CheckSquare, Clock, Info, Mic, Camera, Sparkles } from 'lucide-react';
+import { CheckSquare, Clock, Info, Mic, Camera, Building2, Video, Sparkles, Copy } from 'lucide-react';
 
 interface ContextMenuProps {
   x: number;
   y: number;
+  targetNodeId?: string | null;
+  onDuplicate?: (nodeId: string) => void;
   onClose: () => void;
   onSelect: (type: NodeType) => void;
 }
@@ -12,6 +14,8 @@ interface ContextMenuProps {
 export const ContextMenu: React.FC<ContextMenuProps> = ({
   x,
   y,
+  targetNodeId,
+  onDuplicate,
   onClose,
   onSelect,
 }) => {
@@ -38,7 +42,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
   // Adjust positioning so menu doesn't overflow screen
   const menuWidth = 220;
-  const menuHeight = 260;
+  const menuHeight = 320;
   const adjustedX = Math.min(x, window.innerWidth - menuWidth - 20);
   const adjustedY = Math.min(y, window.innerHeight - menuHeight - 20);
 
@@ -71,11 +75,11 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       color: 'hover:bg-emerald-50 dark:hover:bg-emerald-950/50',
     },
     {
-      type: 'audio',
-      label: 'Audio Block',
-      description: 'Voice note & transcript',
-      icon: <Mic className="w-4 h-4 text-violet-500" />,
-      color: 'hover:bg-violet-50 dark:hover:bg-violet-950/50',
+      type: 'venue',
+      label: 'Venue Block',
+      description: 'Setup, teardown & logistics',
+      icon: <Building2 className="w-4 h-4 text-indigo-500" />,
+      color: 'hover:bg-indigo-50 dark:hover:bg-indigo-950/50',
     },
     {
       type: 'picture',
@@ -83,6 +87,20 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       description: 'Camera photo / image upload',
       icon: <Camera className="w-4 h-4 text-rose-500" />,
       color: 'hover:bg-rose-50 dark:hover:bg-rose-950/50',
+    },
+    {
+      type: 'audio',
+      label: 'Audio Block',
+      description: 'Voice note & transcript',
+      icon: <Mic className="w-4 h-4 text-purple-500" />,
+      color: 'hover:bg-purple-50 dark:hover:bg-purple-950/50',
+    },
+    {
+      type: 'video',
+      label: 'Video Block',
+      description: 'YouTube, Vimeo & HTML5 video',
+      icon: <Video className="w-4 h-4 text-orange-500" />,
+      color: 'hover:bg-orange-50 dark:hover:bg-orange-950/50',
     },
   ];
 
@@ -92,6 +110,27 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       style={{ left: `${adjustedX}px`, top: `${adjustedY}px` }}
       className="fixed z-50 w-56 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-1.5 animate-fadeIn select-none"
     >
+      {targetNodeId && onDuplicate && (
+        <div className="pb-1 mb-1 border-b border-slate-100 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => {
+              onDuplicate(targetNodeId);
+              onClose();
+            }}
+            className="w-full p-2 rounded-xl flex items-center gap-2.5 text-left transition-colors bg-blue-50/60 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 font-bold text-xs"
+          >
+            <div className="w-7 h-7 rounded-lg bg-blue-500 text-white flex items-center justify-center flex-shrink-0 shadow-sm shadow-blue-500/30">
+              <Copy className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold">Duplicate Block</div>
+              <div className="text-[10px] text-blue-400 font-normal">Clone block & subtasks</div>
+            </div>
+          </button>
+        </div>
+      )}
+
       <div className="px-3 py-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5 mb-1">
         <Sparkles className="w-3.5 h-3.5 text-blue-500" />
         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">

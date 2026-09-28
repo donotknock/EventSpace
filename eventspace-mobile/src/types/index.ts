@@ -1,5 +1,5 @@
 export type Priority = 'high' | 'med' | 'low';
-export type NodeType = 'task' | 'chaser' | 'info' | 'note' | 'picture' | 'audio';
+export type NodeType = 'task' | 'chaser' | 'info' | 'venue' | 'picture' | 'audio' | 'video' | 'note';
 
 export interface EventItem {
   id: string;
@@ -10,6 +10,7 @@ export interface EventItem {
   startDate?: string | null;
   endDate?: string | null;
   priority?: Priority | null;
+  color?: string | null;
   isMuted: boolean;
   isCompleted?: boolean;
   isTemplate?: boolean;
@@ -115,6 +116,7 @@ export interface AgendaResponse {
   taskNodes: AgendaNode[];
   checklistItems: AgendaChecklistItem[];
   totalPending: number;
+  totalAgendaDated?: number;
 }
 
 export interface NormalizedAgendaItem {
@@ -139,7 +141,12 @@ export interface NormalizedAgendaItem {
 
 export interface ServerConfig {
   serverUrl: string;
-  pin: string;
+  pin?: string;
+  pairingCode?: string;
+  token?: string;
+  workspaceId?: string;
   pairedAt?: string;
   serverName?: string;
+  username?: string;
+  deviceName?: string;
 }

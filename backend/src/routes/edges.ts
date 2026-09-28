@@ -1,8 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { requireAuth, requireWorkspace } from '../middleware/auth.js';
 
 export const edgesRouter = Router({ mergeParams: true });
+
+edgesRouter.use(requireAuth);
+edgesRouter.use(requireWorkspace);
 
 const edgeSchema = z.object({
   id: z.string().optional(),
@@ -33,10 +37,29 @@ edgesRouter.get('/', async (req: Request, res: Response) => {
   }
 });
 
+async function checkEventEditAccess(eventId: string, userId: string, workspaceId?: string) {
+  return prisma.event.findFirst({
+    where: {
+      id: eventId,
+      deletedAt: null,
+      OR: [
+        { workspaceId },
+        { shares: { some: { userId, role: 'editor' } } },
+      ],
+    },
+  });
+}
+
 // POST /api/events/:eventId/edges - Add single edge
 edgesRouter.post('/', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot create connections' });
+    }
+
     const parsed = edgeSchema.parse(req.body);
 
     const edge = await prisma.canvasEdge.create({
@@ -67,6 +90,12 @@ edgesRouter.post('/', async (req: Request, res: Response) => {
 edgesRouter.put('/sync', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot sync connections' });
+    }
+
     const parsed = syncEdgesSchema.parse(req.body);
 
     // Atomically replace edges for this event
@@ -110,8 +139,15 @@ edgesRouter.put('/sync', async (req: Request, res: Response) => {
 edgesRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot delete connections' });
+    }
+
     await prisma.canvasEdge.deleteMany({
-      where: { id },
+      where: { id, eventId },
     });
     res.json({ success: true });
   } catch (error) {

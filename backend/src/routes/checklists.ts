@@ -1,8 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { requireAuth, requireWorkspace } from '../middleware/auth.js';
 
 export const checklistsRouter = Router({ mergeParams: true });
+
+checklistsRouter.use(requireAuth);
+checklistsRouter.use(requireWorkspace);
 
 const checklistSchema = z.object({
   category: z.string().min(1, 'Category is required'),
@@ -13,10 +17,39 @@ const checklistSchema = z.object({
 
 const updateChecklistSchema = checklistSchema.partial();
 
+// Helper to check editor/owner permissions
+async function checkEventEditAccess(eventId: string, userId: string, workspaceId?: string) {
+  return prisma.event.findFirst({
+    where: {
+      id: eventId,
+      deletedAt: null,
+      OR: [
+        { workspaceId },
+        { shares: { some: { userId, role: 'editor' } } },
+      ],
+    },
+  });
+}
+
 // GET /api/events/:eventId/checklists
 checklistsRouter.get('/', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await prisma.event.findFirst({
+      where: {
+        id: eventId,
+        deletedAt: null,
+        OR: [
+          { workspaceId: req.workspaceId },
+          { shares: { some: { userId: req.user!.id } } },
+        ],
+      },
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
     const items = await prisma.checklistItem.findMany({
       where: { eventId, deletedAt: null },
       orderBy: { order: 'asc' },
@@ -32,10 +65,17 @@ checklistsRouter.get('/', async (req: Request, res: Response) => {
 checklistsRouter.post('/', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot create checklist items' });
+    }
+
     const parsed = checklistSchema.parse(req.body);
 
     const item = await prisma.checklistItem.create({
       data: {
+        workspaceId: event.workspaceId,
         eventId,
         category: parsed.category,
         content: parsed.content,
@@ -58,6 +98,21 @@ checklistsRouter.post('/', async (req: Request, res: Response) => {
 const handleUpdateChecklist = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot edit checklist items' });
+    }
+
+    const existing = await prisma.checklistItem.findFirst({
+      where: { id, eventId, deletedAt: null },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Checklist item not found' });
+    }
+
     const parsed = updateChecklistSchema.parse(req.body);
 
     const updated = await prisma.checklistItem.update({
@@ -82,6 +137,21 @@ checklistsRouter.patch('/:id', handleUpdateChecklist);
 checklistsRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot delete checklist items' });
+    }
+
+    const existing = await prisma.checklistItem.findFirst({
+      where: { id, eventId, deletedAt: null },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Checklist item not found' });
+    }
+
     await prisma.checklistItem.update({
       where: { id },
       data: { deletedAt: new Date() },

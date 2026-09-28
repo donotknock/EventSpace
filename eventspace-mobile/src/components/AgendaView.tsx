@@ -70,7 +70,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
       ]);
       const normalized = mobileApi.normalizeAgenda(agendaData);
       setItems(normalized);
-      setEvents(eventsData);
+      setEvents(eventsData.filter((e) => (e as any).status !== 'archived'));
       setIsOnline(true);
     } catch (err: any) {
       console.error('Failed to load agenda feed:', err);

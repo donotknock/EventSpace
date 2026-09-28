@@ -14,8 +14,15 @@ import {
   Square,
   List,
   Edit3,
+  MapPin,
+  User,
+  Copy,
+  Table,
+  Building2,
 } from 'lucide-react';
 import type { CanvasNodeItem, NodeType, Priority, Subtask } from '../types';
+import { ContentWithTables, tsvToMarkdownTable } from '../utils/markdownTable';
+import { mobileApi } from '../services/api';
 
 interface BlockModalProps {
   isOpen: boolean;
@@ -29,16 +36,20 @@ interface BlockModalProps {
     assignee?: string | null;
     metadata?: string | null;
   }) => Promise<void>;
+  onDuplicate?: (node: CanvasNodeItem) => void;
   initialNode?: CanvasNodeItem | null;
   defaultType?: NodeType;
+  serverUrl?: string;
 }
 
 export const BlockModal: React.FC<BlockModalProps> = ({
   isOpen,
   onClose,
   onSave,
+  onDuplicate,
   initialNode,
   defaultType = 'task',
+  serverUrl,
 }) => {
   const [type, setType] = useState<NodeType>(defaultType);
   const [title, setTitle] = useState('');
@@ -54,6 +65,22 @@ export const BlockModal: React.FC<BlockModalProps> = ({
   const [editingSubtaskText, setEditingSubtaskText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Venue logistics fields
+  const [location, setLocation] = useState('');
+  const [setupTime, setSetupTime] = useState('');
+  const [teardownTime, setTeardownTime] = useState('');
+  const [contactPerson, setContactPerson] = useState('');
+  const [venuesList, setVenuesList] = useState<any[]>([]);
+  const [isAddingNewVenue, setIsAddingNewVenue] = useState(false);
+  const [newVenueName, setNewVenueName] = useState('');
+
+  // Load saved venues if serverUrl is provided
+  useEffect(() => {
+    if (serverUrl && isOpen) {
+      mobileApi.getVenues(serverUrl).then(setVenuesList).catch(() => {});
+    }
+  }, [serverUrl, isOpen]);
 
   // Sync state whenever initialNode or isOpen changes
   useEffect(() => {
@@ -86,20 +113,38 @@ export const BlockModal: React.FC<BlockModalProps> = ({
           } else {
             setSubtasks([]);
           }
+
+          // Load venue fields from metadata
+          setLocation(meta.location || '');
+          setSetupTime(meta.setupTime || '');
+          setTeardownTime(meta.teardownTime || '');
+          setContactPerson(meta.contactPerson || '');
         } catch {
           setSubtasks([]);
+          setLocation('');
+          setSetupTime('');
+          setTeardownTime('');
+          setContactPerson('');
         }
       } else {
         setSubtasks([]);
+        setLocation('');
+        setSetupTime('');
+        setTeardownTime('');
+        setContactPerson('');
       }
     } else {
       setType(defaultType);
       setTitle('');
       setContent('');
       setPriority(null);
-      setDueDate('');
+      setDueDate(''); // Strictly null/empty by default (No default dates requirement)
       setAssignee('');
       setSubtasks([]);
+      setLocation('');
+      setSetupTime('');
+      setTeardownTime('');
+      setContactPerson('');
     }
 
     setNewSubtaskText('');
@@ -107,6 +152,8 @@ export const BlockModal: React.FC<BlockModalProps> = ({
     setNewSubtaskDueDate('');
     setEditingSubtaskIndex(null);
     setEditingSubtaskText('');
+    setIsAddingNewVenue(false);
+    setNewVenueName('');
     setError(null);
   }, [initialNode, isOpen, defaultType]);
 
@@ -121,7 +168,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
       label: newSubtaskText.trim(),
       done: false,
       style: newSubtaskStyle,
-      dueDate: isBullet ? null : (newSubtaskDueDate ? new Date(newSubtaskDueDate).toISOString() : null),
+      dueDate: newSubtaskDueDate ? new Date(newSubtaskDueDate).toISOString() : null,
     };
     setSubtasks([...subtasks, subtask]);
     setNewSubtaskText('');
@@ -176,6 +223,21 @@ export const BlockModal: React.FC<BlockModalProps> = ({
     setSubtasks(subtasks.filter((_, i) => i !== idx));
   };
 
+  const handleCreateInlineVenue = async () => {
+    if (!newVenueName.trim() || !serverUrl) return;
+    try {
+      const created = await mobileApi.createVenue(serverUrl, { name: newVenueName.trim() });
+      setVenuesList((prev) => [...prev, created]);
+      setLocation(created.name);
+      setIsAddingNewVenue(false);
+      setNewVenueName('');
+    } catch {
+      setLocation(newVenueName.trim());
+      setIsAddingNewVenue(false);
+      setNewVenueName('');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
@@ -202,6 +264,14 @@ export const BlockModal: React.FC<BlockModalProps> = ({
         style: st.style || 'circle',
         dueDate: st.style === 'bullet' ? null : st.dueDate || null,
       }));
+
+      // Venue fields
+      if (type === 'venue') {
+        metaObj.location = location.trim() || undefined;
+        metaObj.setupTime = setupTime || undefined;
+        metaObj.teardownTime = teardownTime || undefined;
+        metaObj.contactPerson = contactPerson.trim() || undefined;
+      }
 
       metadataStr = JSON.stringify(metaObj);
 
@@ -235,12 +305,28 @@ export const BlockModal: React.FC<BlockModalProps> = ({
           <h3 className="text-base font-bold">
             {initialNode ? 'Edit Building Block' : 'Create Building Block'}
           </h3>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center justify-center"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {initialNode && onDuplicate && (
+              <button
+                type="button"
+                onClick={() => {
+                  onDuplicate(initialNode);
+                  onClose();
+                }}
+                className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 text-xs font-semibold flex items-center gap-1 transition-colors"
+                title="Duplicate this block"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Duplicate</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center justify-center"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -257,13 +343,15 @@ export const BlockModal: React.FC<BlockModalProps> = ({
               <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 text-[10px]">
                 Block Type
               </label>
-              <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+              <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
                 {[
                   { id: 'task', label: 'Task', color: 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400' },
                   { id: 'chaser', label: 'Chaser', color: 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400' },
                   { id: 'info', label: 'Info', color: 'border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-                  { id: 'audio', label: 'Audio', color: 'border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400' },
+                  { id: 'venue', label: 'Venue', color: 'border-indigo-500 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' },
                   { id: 'picture', label: 'Picture', color: 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400' },
+                  { id: 'audio', label: 'Audio', color: 'border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400' },
+                  { id: 'video', label: 'Video', color: 'border-orange-500 bg-orange-500/10 text-orange-600 dark:text-orange-400' },
                 ].map((item) => (
                   <button
                     type="button"
@@ -297,18 +385,175 @@ export const BlockModal: React.FC<BlockModalProps> = ({
             />
           </div>
 
-          {/* Content / Notes */}
+          {/* Venue Specific Logistics Fields */}
+          {type === 'venue' && (
+            <div className="space-y-3 p-3 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200/60 dark:border-indigo-900/40">
+              <div className="flex items-center justify-between">
+                <label className="block font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 text-[10px] flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  <span>Venue Location</span>
+                </label>
+                {!isAddingNewVenue && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNewVenue(true)}
+                    className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>+ Add new venue</span>
+                  </button>
+                )}
+              </div>
+
+              {isAddingNewVenue ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newVenueName}
+                    onChange={(e) => setNewVenueName(e.target.value)}
+                    placeholder="New venue name..."
+                    className="flex-1 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 text-xs text-slate-900 dark:text-white"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCreateInlineVenue}
+                    className="px-2.5 py-1.5 rounded-xl bg-indigo-600 text-white font-bold text-xs"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNewVenue(false)}
+                    className="px-2 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-700 text-xs"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <select
+                  value={location}
+                  onChange={(e) => {
+                    if (e.target.value === '__add_new__') {
+                      setIsAddingNewVenue(true);
+                    } else {
+                      setLocation(e.target.value);
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-none"
+                >
+                  <option value="">Select or choose location...</option>
+                  {venuesList.map((v) => (
+                    <option key={v.id || v.name} value={v.name}>
+                      {v.name} {v.address ? `(${v.address})` : ''}
+                    </option>
+                  ))}
+                  {location && !venuesList.some((v) => v.name === location) && (
+                    <option value={location}>{location} (Custom)</option>
+                  )}
+                  <option value="__add_new__">+ Add new venue...</option>
+                </select>
+              )}
+
+              {/* Setup and Teardown Times */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 text-[10px] flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>Setup Time</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={setupTime}
+                    onChange={(e) => setSetupTime(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 text-[10px] flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>Teardown Time</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={teardownTime}
+                    onChange={(e) => setTeardownTime(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* Contact Person */}
+              <div>
+                <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 text-[10px] flex items-center gap-1">
+                  <User className="w-3 h-3 text-slate-400" />
+                  <span>Contact Person</span>
+                </label>
+                <input
+                  type="text"
+                  value={contactPerson}
+                  onChange={(e) => setContactPerson(e.target.value)}
+                  placeholder="e.g. Venue Manager, Phone #..."
+                  className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Content / Notes with Table Support */}
           <div>
-            <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 text-[10px]">
-              Details / Description
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 text-[10px]">
+                {type === 'venue' ? 'Venue Notes & Logistics' : 'Details / Description'}
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  const tableTemplate = `\n| Item | Specification | Status |\n| --- | --- | --- |\n| Item 1 | Detail 1 | Ready |\n| Item 2 | Detail 2 | Pending |\n`;
+                  setContent((prev) => (prev ? `${prev.trim()}\n${tableTemplate}` : tableTemplate.trim()));
+                }}
+                className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
+              >
+                <Table className="w-3 h-3" />
+                <span>+ Insert Table</span>
+              </button>
+            </div>
             <textarea
-              rows={3}
+              rows={type === 'venue' ? 2 : 4}
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="Add additional details, links, or instructions..."
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40 text-slate-900 dark:text-white"
+              onPaste={(e) => {
+                const pasteText = e.clipboardData.getData('text');
+                if (pasteText && pasteText.includes('\t') && pasteText.includes('\n')) {
+                  const markdown = tsvToMarkdownTable(pasteText);
+                  if (markdown) {
+                    e.preventDefault();
+                    const target = e.currentTarget;
+                    const start = target.selectionStart || 0;
+                    const end = target.selectionEnd || 0;
+                    const updated = content.slice(0, start) + markdown + content.slice(end);
+                    setContent(updated);
+                  }
+                }
+              }}
+              placeholder={
+                type === 'info'
+                  ? "Add information or paste spreadsheets (Excel/Sheets)... Use '+ Insert Table' to format."
+                  : 'Add additional details, links, or instructions...'
+              }
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40 text-slate-900 dark:text-white font-mono"
             />
+
+            {/* Table preview if content contains table */}
+            {content && content.includes('|') && content.includes('---') && (
+              <div className="mt-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                  Table Preview
+                </span>
+                <ContentWithTables content={content} />
+              </div>
+            )}
           </div>
 
           {/* Subtasks (for Task and Chaser types) */}
@@ -396,8 +641,8 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                               {text}
                             </span>
 
-                            {/* Due date if not bullet */}
-                            {!isBullet && st.dueDate && (
+                            {/* Due date */}
+                            {st.dueDate && (
                               <span className="text-[10px] text-slate-400 bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded shrink-0">
                                 {new Date(st.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                               </span>
@@ -469,36 +714,33 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                       }`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                      <span>Bullet Note</span>
+                      <span>Bullet</span>
                     </button>
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex items-center gap-1.5">
                   <input
                     type="text"
                     value={newSubtaskText}
                     onChange={(e) => setNewSubtaskText(e.target.value)}
+                    placeholder="New subtask text..."
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         handleAddSubtask();
                       }
                     }}
-                    placeholder={newSubtaskStyle === 'bullet' ? 'Add a bullet list note...' : 'Add a checkable subtask...'}
-                    className="flex-1 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
+                    className="flex-1 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
                   />
 
-                  {/* Due date picker hidden if bullet style */}
-                  {newSubtaskStyle !== 'bullet' && (
-                    <input
-                      type="date"
-                      value={newSubtaskDueDate}
-                      onChange={(e) => setNewSubtaskDueDate(e.target.value)}
-                      className="px-2 py-1 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
-                      title="Optional subtask due date"
-                    />
-                  )}
+                  <input
+                    type="date"
+                    value={newSubtaskDueDate}
+                    onChange={(e) => setNewSubtaskDueDate(e.target.value)}
+                    className="px-2 py-1 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                    title="Optional subtask due date"
+                  />
 
                   <button
                     type="button"

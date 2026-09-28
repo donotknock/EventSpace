@@ -1,17 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { requireAuth, requireWorkspace } from '../middleware/auth.js';
 
 export const nodesRouter = Router({ mergeParams: true });
 
+nodesRouter.use(requireAuth);
+nodesRouter.use(requireWorkspace);
+
 const nodeSchema = z.object({
-  type: z.enum(['task', 'info', 'chaser', 'note', 'picture', 'audio']).default('task'),
+  type: z.enum(['task', 'info', 'chaser', 'note', 'picture', 'audio', 'venue', 'video']).default('task'),
   xPosition: z.number(),
   yPosition: z.number(),
   title: z.string().min(1, 'Title is required'),
   content: z.string().optional().nullable(),
   isCompleted: z.boolean().default(false),
-  dueDate: z.string().datetime().optional().nullable(),
+  dueDate: z.union([z.string().datetime(), z.literal(''), z.null()]).optional(),
   assignee: z.string().optional().nullable(),
   priority: z.enum(['high', 'med', 'low']).optional().nullable(),
   metadata: z.string().optional().nullable(), // Stored JSON string
@@ -33,6 +37,21 @@ const batchPositionsSchema = z.object({
 nodesRouter.get('/', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await prisma.event.findFirst({
+      where: {
+        id: eventId,
+        deletedAt: null,
+        OR: [
+          { workspaceId: req.workspaceId },
+          { shares: { some: { userId: req.user!.id } } },
+        ],
+      },
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
     const nodes = await prisma.canvasNode.findMany({
       where: { eventId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
@@ -44,14 +63,35 @@ nodesRouter.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// Helper to check editor/owner permissions
+async function checkEventEditAccess(eventId: string, userId: string, workspaceId?: string) {
+  return prisma.event.findFirst({
+    where: {
+      id: eventId,
+      deletedAt: null,
+      OR: [
+        { workspaceId },
+        { shares: { some: { userId, role: 'editor' } } },
+      ],
+    },
+  });
+}
+
 // POST /api/events/:eventId/nodes
 nodesRouter.post('/', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot create blocks' });
+    }
+
     const parsed = nodeSchema.parse(req.body);
 
     const node = await prisma.canvasNode.create({
       data: {
+        workspaceId: event.workspaceId,
         eventId,
         type: parsed.type,
         xPosition: parsed.xPosition,
@@ -80,6 +120,12 @@ nodesRouter.post('/', async (req: Request, res: Response) => {
 nodesRouter.put('/batch/positions', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot move blocks' });
+    }
+
     const parsed = batchPositionsSchema.parse(req.body);
 
     // Run batch updates inside a transaction
@@ -109,11 +155,26 @@ nodesRouter.put('/batch/positions', async (req: Request, res: Response) => {
 const handleUpdateNode = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot edit blocks' });
+    }
+
+    const existing = await prisma.canvasNode.findFirst({
+      where: { id, eventId, deletedAt: null },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Node not found' });
+    }
+
     const parsed = updateNodeSchema.parse(req.body);
 
     const data: any = { ...parsed };
     if (parsed.dueDate !== undefined) {
-      data.dueDate = parsed.dueDate ? new Date(parsed.dueDate) : null;
+      data.dueDate = parsed.dueDate && parsed.dueDate !== '' ? new Date(parsed.dueDate) : null;
     }
 
     const updated = await prisma.canvasNode.update({
@@ -138,6 +199,21 @@ nodesRouter.patch('/:id', handleUpdateNode);
 nodesRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot delete blocks' });
+    }
+
+    const existing = await prisma.canvasNode.findFirst({
+      where: { id, eventId, deletedAt: null },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Node not found' });
+    }
+
     await prisma.canvasNode.update({
       where: { id },
       data: { deletedAt: new Date() },

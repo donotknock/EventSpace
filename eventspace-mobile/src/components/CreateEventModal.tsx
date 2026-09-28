@@ -171,19 +171,25 @@ export const CreateEventModal: React.FC<CreateEventModalProps> = ({
               className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             >
               <option value="">Start with blank canvas</option>
-              {templates.length > 0 && (
+              {templates.filter((tpl) => (tpl as any).status !== 'archived').length > 0 && (
                 <optgroup label="Saved Templates">
-                  {templates.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>
-                      📁 {tpl.title}
-                    </option>
-                  ))}
+                  {templates
+                    .filter((tpl) => (tpl as any).status !== 'archived')
+                    .map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>
+                        📁 {tpl.title}
+                      </option>
+                    ))}
                 </optgroup>
               )}
-              {existingEvents.length > 0 && (
+              {existingEvents.filter(
+                (ev) => !ev.isTemplate && (ev as any).status !== 'archived' && !(ev as any).isCompleted
+              ).length > 0 && (
                 <optgroup label="Existing Events">
                   {existingEvents
-                    .filter((ev) => !ev.isTemplate)
+                    .filter(
+                      (ev) => !ev.isTemplate && (ev as any).status !== 'archived' && !(ev as any).isCompleted
+                    )
                     .map((ev) => (
                       <option key={ev.id} value={ev.id}>
                         🗓️ {ev.title}

@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,20 +51,55 @@ async function main() {
     }
   }
 
-  console.log('[Seed] Wiping existing data (events, blocks, edges, checklists, friction logs)...');
+  console.log('[Seed] Wiping all existing data (friction logs, checklists, edges, nodes, shares, pairing codes, contacts, venues, events, memberships, workspaces, users)...');
   await prisma.frictionLog.deleteMany();
   await prisma.checklistItem.deleteMany();
   await prisma.canvasEdge.deleteMany();
   await prisma.canvasNode.deleteMany();
+  await prisma.eventShare.deleteMany();
+  await prisma.pairingCode.deleteMany();
+  await prisma.contact.deleteMany();
+  await prisma.venue.deleteMany();
   await prisma.event.deleteMany();
+  await prisma.workspaceMember.deleteMany();
+  await prisma.workspace.deleteMany();
+  await prisma.user.deleteMany();
 
+  console.log('[Seed] Seeding initial Admin user and Main Workspace...');
+  const adminUsername = (process.env.ADMIN_USERNAME || 'admin').trim().toLowerCase();
+  const adminPassword = process.env.ADMIN_PASSWORD || 'password123';
+  const passwordHash = await bcrypt.hash(adminPassword, 10);
+
+  const adminUser = await prisma.user.create({
+    data: {
+      username: adminUsername,
+      passwordHash,
+      name: 'System Administrator',
+      role: 'admin',
+    },
+  });
+
+  const mainWorkspace = await prisma.workspace.create({
+    data: {
+      name: 'Main Workspace',
+      members: {
+        create: {
+          userId: adminUser.id,
+          role: 'owner',
+        },
+      },
+    },
+  });
+
+  console.log(`[Seed] Created admin: ${adminUser.username} (${adminUser.id}) and workspace: ${mainWorkspace.name}`);
   console.log('[Seed] Generating "Welcome to EventSpace" tutorial onboarding event...');
 
   const iconDataUrl = getIconBase64();
 
-  // Create Onboarding Event
+  // Create Onboarding Event tied to main workspace
   const onboardingEvent = await prisma.event.create({
     data: {
+      workspaceId: mainWorkspace.id,
       title: 'Welcome to EventSpace',
       department: 'Orientation',
       term: 'Tutorial',
@@ -130,6 +166,7 @@ async function main() {
   // Central Hub: PictureNode with EventSpace icon
   const centralPictureNode = await prisma.canvasNode.create({
     data: {
+      workspaceId: mainWorkspace.id,
       eventId: onboardingEvent.id,
       type: 'picture',
       title: 'Welcome to EventSpace',
@@ -138,7 +175,7 @@ async function main() {
       content: iconDataUrl,
       isCompleted: false,
       priority: 'high',
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      dueDate: null,
       metadata: JSON.stringify({
         caption: 'A spatial event management dashboard for visual thinkers.',
         isCentralHub: true,
@@ -149,6 +186,7 @@ async function main() {
   // 1. Info Block (Top): Schedule/Agenda view and overarching checklists
   const infoNode = await prisma.canvasNode.create({
     data: {
+      workspaceId: mainWorkspace.id,
       eventId: onboardingEvent.id,
       type: 'info',
       title: 'Schedule & Department Checklists',
@@ -158,6 +196,7 @@ async function main() {
         '• Pinned Overarching Checklists at the top track Facilities (FM), AV, and Catering in real time.\n• Click "Schedule" in the header to view time-sequenced milestones and due dates.\n• Tap the collapse arrow on the checklist container anytime to maximize canvas workspace.',
       isCompleted: false,
       priority: 'med',
+      dueDate: null,
       metadata: JSON.stringify({
         bullets: [
           'Pinned Overarching Checklists track Facilities, AV & Catering',
@@ -171,6 +210,7 @@ async function main() {
   // 2. Note Block (Left): "T" button (OpenDyslexic font) and theme toggles
   const noteNode = await prisma.canvasNode.create({
     data: {
+      workspaceId: mainWorkspace.id,
       eventId: onboardingEvent.id,
       type: 'note',
       title: 'Themes & OpenDyslexic Typography',
@@ -180,6 +220,7 @@ async function main() {
         '• Click the "T" button in the top navigation bar to toggle OpenDyslexic typography.\n• Click the Theme icon to switch between Dark, Light, and High-Contrast modes.\n• Canvas viewport pan position and zoom scale are auto-saved per event.',
       isCompleted: false,
       priority: 'med',
+      dueDate: null,
       metadata: JSON.stringify({
         bullets: [
           'Click the "T" button in the header to enable OpenDyslexic font',
@@ -193,6 +234,7 @@ async function main() {
   // 3. Chaser Block (Right): Connecting Mobile Companion app via Settings gear
   const chaserNode = await prisma.canvasNode.create({
     data: {
+      workspaceId: mainWorkspace.id,
       eventId: onboardingEvent.id,
       type: 'chaser',
       title: 'Mobile Companion App Pairing',
@@ -203,7 +245,7 @@ async function main() {
       isCompleted: false,
       priority: 'high',
       assignee: 'Mobile App',
-      dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      dueDate: null,
       metadata: JSON.stringify({
         bullets: [
           'Open Settings ⚙️ in the web header to view the Mobile Companion PIN',
@@ -217,6 +259,7 @@ async function main() {
   // 4. Task Block (Bottom): Using checkboxes, subtasks, and right-click menu
   const taskNode = await prisma.canvasNode.create({
     data: {
+      workspaceId: mainWorkspace.id,
       eventId: onboardingEvent.id,
       type: 'task',
       title: 'Canvas Controls & Interactive Blocks',
@@ -227,7 +270,7 @@ async function main() {
       isCompleted: false,
       priority: 'high',
       assignee: 'You (Event Lead)',
-      dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+      dueDate: null,
       metadata: JSON.stringify({
         bullets: [
           'Right-click empty canvas to spawn Task, Chaser, Info, Note, Audio, or Picture blocks',

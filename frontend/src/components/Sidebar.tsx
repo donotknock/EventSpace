@@ -31,11 +31,17 @@ import {
   Calendar,
   Settings,
   Trash2,
+  Users,
+  LayoutTemplate,
+  Building2,
+  LogOut,
 } from 'lucide-react';
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  sidebarWidth?: number;
+  onSidebarWidthChange?: (w: number) => void;
   events: EventItem[];
   activeEventId: string | null;
   onSelectEvent: (id: string) => void;
@@ -45,6 +51,10 @@ interface SidebarProps {
   onLocateChecklist?: (category: string, eventId: string, checklistId?: string) => void;
   onOpenSettings?: () => void;
   onOpenTrash?: () => void;
+  onOpenContacts?: () => void;
+  onOpenTemplates?: () => void;
+  onOpenVenues?: () => void;
+  onLogout?: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   selectedYear: string;
@@ -60,6 +70,8 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
   onClose,
+  sidebarWidth: controlledWidth,
+  onSidebarWidthChange,
   events,
   activeEventId,
   onSelectEvent,
@@ -69,6 +81,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLocateChecklist,
   onOpenSettings,
   onOpenTrash,
+  onOpenContacts,
+  onOpenTemplates,
+  onOpenVenues,
+  onLogout,
   searchQuery,
   onSearchChange,
   selectedYear,
@@ -90,6 +106,55 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [globalResults, setGlobalResults] = useState<GlobalSearchResponse | null>(null);
   const [isSearchingGlobal, setIsSearchingGlobal] = useState(false);
 
+  // Resizable sidebar state (stored in localStorage)
+  const [internalSidebarWidth, setInternalSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('eventspace_sidebar_width');
+      return saved ? Math.min(500, Math.max(72, parseInt(saved, 10))) : 288;
+    } catch {
+      return 288;
+    }
+  });
+
+  const sidebarWidth = controlledWidth !== undefined ? controlledWidth : internalSidebarWidth;
+  const isCollapsedMode = sidebarWidth < 160;
+
+  const setSidebarWidth = (w: number) => {
+    if (onSidebarWidthChange) {
+      onSidebarWidthChange(w);
+    } else {
+      setInternalSidebarWidth(w);
+    }
+  };
+
+  const handleStartResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      let newW = startW + delta;
+      if (newW < 140) {
+        newW = 72; // Snap to compact icon-only column
+      } else {
+        newW = Math.min(520, Math.max(160, newW));
+      }
+      setSidebarWidth(newW);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      try {
+        localStorage.setItem('eventspace_sidebar_width', String(sidebarWidth));
+      } catch {}
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
   useEffect(() => {
     if (!searchQuery.trim()) {
       setGlobalResults(null);
@@ -107,28 +172,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Extract distinct metadata for filters
+  const activeEvents = useMemo(
+    () => events.filter((e) => !e.isCompleted && e.status !== 'archived'),
+    [events]
+  );
+  const archivedEvents = useMemo(
+    () => events.filter((e) => Boolean(e.isCompleted) || e.status === 'archived'),
+    [events]
+  );
+
+  // Extract distinct metadata for filters strictly from active, non-archived events
   const years = useMemo(() => {
     const set = new Set<string>();
-    events.forEach((e) => {
+    activeEvents.forEach((e) => {
       if (e.year) set.add(e.year);
     });
     return Array.from(set).sort();
-  }, [events]);
+  }, [activeEvents]);
 
   const departments = useMemo(() => {
     const set = new Set<string>();
-    events.forEach((e) => {
+    activeEvents.forEach((e) => {
       if (e.department) set.add(e.department);
     });
     return Array.from(set).sort();
-  }, [events]);
+  }, [activeEvents]);
 
   const MONTH_NAMES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
   const eventMonths = useMemo(() => {
     const set = new Set<string>();
-    events.forEach((e) => {
+    activeEvents.forEach((e) => {
       if (e.startDate) {
         const d = new Date(e.startDate);
         if (!isNaN(d.getTime())) {
@@ -145,10 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (ia !== -1 && ib !== -1) return ia - ib;
       return a.localeCompare(b);
     });
-  }, [events]);
-
-  const activeEvents = useMemo(() => events.filter((e) => !e.isCompleted), [events]);
-  const archivedEvents = useMemo(() => events.filter((e) => Boolean(e.isCompleted)), [events]);
+  }, [activeEvents]);
 
   const getNodeTintClasses = (type: string) => {
     switch (type.toLowerCase()) {
@@ -205,47 +276,76 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       <aside
-        className={`fixed lg:static top-0 bottom-0 left-0 z-40 flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-all duration-300 ease-in-out select-none ${
+        style={isOpen ? { width: `${isCollapsedMode ? 72 : sidebarWidth}px` } : undefined}
+        className={`fixed lg:static top-0 bottom-0 left-0 z-40 flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-[width] duration-75 select-none relative ${
           isOpen
-            ? 'w-80 translate-x-0 opacity-100'
+            ? 'translate-x-0 opacity-100'
             : 'w-0 -translate-x-full lg:translate-x-0 lg:w-0 overflow-hidden border-none opacity-0 pointer-events-none'
         }`}
       >
+        {/* Resize Handle on Right Border */}
+        {isOpen && (
+          <div
+            onMouseDown={handleStartResize}
+            className="hidden lg:block absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500/40 transition-colors z-30 group"
+            title="Drag to resize sidebar"
+          >
+            <div className="w-0.5 h-8 bg-slate-300 dark:bg-slate-700 group-hover:bg-blue-500 rounded-full mx-auto relative top-1/2 -translate-y-1/2" />
+          </div>
+        )}
+
         {/* Sidebar Header & Brand */}
-        <div className="h-16 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
-          <div className="flex items-center gap-3">
+        <div className={`h-16 px-4 flex items-center border-b border-slate-200 dark:border-slate-800 ${
+          isCollapsedMode ? 'justify-center px-2' : 'justify-between'
+        }`}>
+          <div className={`flex items-center gap-3 ${isCollapsedMode ? 'justify-center' : ''}`}>
             <img
               src={iconSrc}
               alt="EventSpace"
-              className="w-8 h-8 object-contain rounded-lg shadow-sm"
+              className="w-8 h-8 object-contain rounded-lg shadow-sm cursor-pointer"
+              onClick={() => {
+                if (isCollapsedMode) setSidebarWidth(288);
+              }}
+              title={isCollapsedMode ? "Click to expand sidebar" : "EventSpace"}
             />
-            <div>
-              <div className="font-extrabold text-base tracking-tight bg-gradient-to-r from-blue-600 to-indigo-500 dark:from-blue-400 dark:to-indigo-300 bg-clip-text text-transparent">
-                EventSpace
+            {!isCollapsedMode && (
+              <div>
+                <div className="font-extrabold text-base tracking-tight bg-gradient-to-r from-blue-600 to-indigo-500 dark:from-blue-400 dark:to-indigo-300 bg-clip-text text-transparent">
+                  EventSpace
+                </div>
+                <div className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                  Spatial Coordination
+                </div>
               </div>
-              <div className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                Spatial Coordination
-              </div>
-            </div>
+            )}
           </div>
 
-          <button
-            onClick={onClose}
-            aria-label="Close sidebar"
-            className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 lg:hidden"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {!isCollapsedMode && (
+            <button
+              onClick={onClose}
+              aria-label="Close sidebar"
+              className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 lg:hidden"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Search & Filter Controls (Collapsed into icon-only buttons by default) */}
         <div className="p-3 border-b border-slate-100 dark:border-slate-800/80 space-y-2">
-          {/* Top Control Bar: Icon Buttons */}
-          <div className="flex items-center gap-2">
-            {!isSearchExpanded ? (
+          {/* Top Control Bar: Icon Buttons (Vertical stacking when minimized) */}
+          <div className={`flex ${isCollapsedMode ? 'flex-col gap-2 items-center' : 'items-center gap-2'}`}>
+            {!isSearchExpanded || isCollapsedMode ? (
               <button
-                onClick={() => setIsSearchExpanded(true)}
-                className={`min-w-[44px] min-h-[44px] px-3 flex-1 flex items-center justify-center gap-2 rounded-xl text-xs font-semibold transition-all ${
+                onClick={() => {
+                  if (isCollapsedMode) {
+                    setSidebarWidth(288);
+                    setIsSearchExpanded(true);
+                  } else {
+                    setIsSearchExpanded(true);
+                  }
+                }}
+                className={`min-w-[44px] min-h-[44px] ${isCollapsedMode ? 'w-11 h-11 p-0' : 'px-3 flex-1'} flex items-center justify-center gap-2 rounded-xl text-xs font-semibold transition-all ${
                   searchQuery
                     ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
                     : 'bg-slate-100 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800'
@@ -254,9 +354,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 aria-label="Open search bar"
               >
                 <Search className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                <span className="truncate">
-                  {searchQuery ? `"${searchQuery}"` : 'Search...'}
-                </span>
+                {!isCollapsedMode && (
+                  <span className="truncate">
+                    {searchQuery ? `"${searchQuery}"` : 'Search...'}
+                  </span>
+                )}
               </button>
             ) : (
               <div className="relative flex-1">
@@ -285,8 +387,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Filter Icon Button */}
             <button
-              onClick={() => setIsFilterExpanded(!isFilterExpanded)}
-              className={`min-w-[44px] min-h-[44px] px-3 flex items-center justify-center gap-1.5 rounded-xl text-xs font-semibold transition-all relative ${
+              onClick={() => {
+                if (isCollapsedMode) {
+                  setSidebarWidth(288);
+                  setIsFilterExpanded(true);
+                } else {
+                  setIsFilterExpanded(!isFilterExpanded);
+                }
+              }}
+              className={`min-w-[44px] min-h-[44px] ${isCollapsedMode ? 'w-11 h-11 p-0' : 'px-3'} flex items-center justify-center gap-1.5 rounded-xl text-xs font-semibold transition-all relative ${
                 hasActiveFilters || isFilterExpanded
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'bg-slate-100 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800'
@@ -608,8 +717,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             /* STANDARD EVENT DIRECTORY LIST */
             <>
               <div className="flex items-center justify-between px-1 py-1 text-[11px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase">
-                <span>Event Directory ({activeEvents.length})</span>
-                <Layers className="w-3.5 h-3.5" />
+                {sidebarWidth >= 200 && <span>Event Directory ({activeEvents.length})</span>}
+                <Layers className="w-3.5 h-3.5 ml-auto" />
               </div>
 
               {activeEvents.length === 0 ? (
@@ -619,6 +728,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ) : (
                 activeEvents.map((event) => {
                   const isActive = event.id === activeEventId;
+
+                  // Calculate complete dated items count (block nodes + subtasks)
+                  let allDatedIncompleteCount = 0;
+                  (event.nodes || []).forEach((n: any) => {
+                    if (n.dueDate && !n.isCompleted) {
+                      allDatedIncompleteCount++;
+                    }
+                    if (n.metadata && !n.isCompleted) {
+                      let subtasks: any[] = [];
+                      if (Array.isArray(n.metadata.subtasks)) {
+                        subtasks = n.metadata.subtasks;
+                      } else if (typeof n.metadata === 'string') {
+                        try {
+                          const parsed = JSON.parse(n.metadata);
+                          if (Array.isArray(parsed.subtasks)) subtasks = parsed.subtasks;
+                        } catch {}
+                      }
+                      subtasks.forEach((st: any) => {
+                        if (st.dueDate && !st.done && st.style !== 'bullet') {
+                          allDatedIncompleteCount++;
+                        }
+                      });
+                    }
+                  });
 
                   // Calculate Dynamic Task Indicators
                   const pendingTaskNodes = event.nodes
@@ -638,77 +771,111 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     return dueTime - now <= 48 * 60 * 60 * 1000;
                   });
 
+                  if (isCollapsedMode) {
+                    const agendaCount = allDatedIncompleteCount;
+                    const hasCustomColor = Boolean(event.color && event.color.trim() && !event.isCompleted);
+                    return (
+                      <div
+                        key={event.id}
+                        onClick={() => onSelectEvent(event.id)}
+                        title={`${event.title} (${agendaCount} schedule item(s))` }
+                        style={hasCustomColor ? { backgroundColor: event.color! } : undefined}
+                        className={`w-11 h-11 mx-auto rounded-2xl cursor-pointer transition-all border flex items-center justify-center relative ${
+                          hasCustomColor
+                            ? `border-transparent text-white ${
+                                isActive ? 'ring-2 ring-white shadow-md' : 'hover:opacity-95'
+                              }`
+                            : isActive
+                            ? 'bg-blue-50/90 dark:bg-blue-950/40 border-blue-500 shadow-sm ring-2 ring-blue-500/30'
+                            : 'bg-white/60 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-800/80 hover:bg-slate-100/80 dark:hover:bg-slate-800/80'
+                        }`}
+                      >
+                        <span className={`text-xs font-black ${hasCustomColor ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                          {agendaCount > 0 ? agendaCount : (event.title[0] || 'E').toUpperCase()}
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  const agendaCount = allDatedIncompleteCount;
+                  const hasCustomColor = Boolean(event.color && event.color.trim() && !event.isCompleted);
+
                   return (
                     <div
                       key={event.id}
                       onClick={() => onSelectEvent(event.id)}
+                      style={hasCustomColor ? { backgroundColor: event.color! } : undefined}
                       className={`group relative min-h-[56px] p-3 rounded-2xl cursor-pointer transition-all border flex items-center justify-between gap-3 ${
-                        isActive
+                        event.isCompleted
+                          ? 'bg-slate-100/60 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800/60 opacity-80'
+                          : hasCustomColor
+                          ? `border-transparent text-white shadow-sm hover:shadow-md ${
+                              isActive ? 'ring-2 ring-white/90 shadow-md scale-[1.01]' : 'hover:scale-[1.005]'
+                            }`
+                          : isActive
                           ? 'bg-blue-50/90 dark:bg-blue-950/40 border-blue-500/50 dark:border-blue-500/60 shadow-sm shadow-blue-500/10 ring-1 ring-blue-500/30'
                           : 'bg-white/60 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-800/80 hover:bg-slate-100/80 dark:hover:bg-slate-800/80'
                       } ${event.isMuted ? 'opacity-65' : ''}`}
                     >
-                      {/* Left: Dynamic Task Notification Dot + Event Title & Metadata */}
-                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                        <div className="pt-0.5 flex-shrink-0">
-                          {totalOutstanding === 0 ? (
-                            <div
-                              className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center flex-shrink-0"
-                              title="All tasks completed"
+                      {/* Left: Event Details & Prominent Schedule Count Badge */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`text-xs font-bold truncate ${
+                              hasCustomColor
+                                ? 'text-white'
+                                : isActive
+                                ? 'text-blue-950 dark:text-blue-100 font-extrabold'
+                                : 'text-slate-800 dark:text-slate-200'
+                            }`}
+                          >
+                            {event.title}
+                          </span>
+
+                          {/* Prominently displayed scheduled task count badge */}
+                          {agendaCount > 0 && (
+                            <span
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black shrink-0 ${
+                                hasCustomColor
+                                  ? 'bg-black/30 text-white border border-white/20'
+                                  : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20'
+                              }`}
+                              title={`${agendaCount} scheduled task(s)`}
                             >
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            </div>
-                          ) : hasUrgentOrOverdue ? (
-                            <div
-                              className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white font-black text-[10px] flex items-center justify-center shadow-sm shadow-red-500/40 ring-2 ring-red-500/20 flex-shrink-0 animate-pulse"
-                              title={`${totalOutstanding} outstanding task(s) - Near-upcoming or overdue!`}
-                            >
-                              {totalOutstanding}
-                            </div>
-                          ) : (
-                            <div
-                              className="min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white font-black text-[10px] flex items-center justify-center shadow-sm shadow-amber-500/40 ring-2 ring-amber-500/20 flex-shrink-0"
-                              title={`${totalOutstanding} pending task(s)`}
-                            >
-                              {totalOutstanding}
-                            </div>
+                              <Calendar className="w-2.5 h-2.5" />
+                              <span>{agendaCount}</span>
+                            </span>
                           )}
                         </div>
 
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className={`text-xs font-bold truncate block ${
-                                isActive
-                                  ? 'text-blue-950 dark:text-blue-100 font-extrabold'
-                                  : 'text-slate-800 dark:text-slate-200'
-                              }`}
-                            >
-                              {event.title}
+                        <div
+                          className={`flex items-center gap-2 mt-1 text-[11px] truncate ${
+                            hasCustomColor ? 'text-white/80' : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {event.department && (
+                            <span className={hasCustomColor ? 'bg-black/20 px-1.5 py-0.5 rounded text-white/90 text-[10px]' : ''}>
+                              {event.department}
                             </span>
-                          </div>
-
-                          <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                            {event.department && <span>{event.department}</span>}
-                            {formatEventDate(event.startDate, event.endDate) ? (
+                          )}
+                          {formatEventDate(event.startDate, event.endDate) ? (
+                            <>
+                              {event.department && <span>•</span>}
+                              <span>
+                                {formatEventDate(event.startDate, event.endDate)}
+                              </span>
+                            </>
+                          ) : (
+                            event.term &&
+                            event.year && (
                               <>
                                 {event.department && <span>•</span>}
                                 <span>
-                                  {formatEventDate(event.startDate, event.endDate)}
+                                  {event.term} {event.year}
                                 </span>
                               </>
-                            ) : (
-                              event.term &&
-                              event.year && (
-                                <>
-                                  {event.department && <span>•</span>}
-                                  <span>
-                                    {event.term} {event.year}
-                                  </span>
-                                </>
-                              )
-                            )}
-                          </div>
+                            )
+                          )}
                         </div>
                       </div>
 
@@ -722,7 +889,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           }}
                           aria-label="Mark event as complete (archive)"
                           title="Mark event complete & archive"
-                          className="min-w-[36px] min-h-[36px] w-9 h-9 flex items-center justify-center rounded-xl text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-all active:scale-90"
+                          className={`min-w-[34px] min-h-[34px] w-8 h-8 flex items-center justify-center rounded-xl transition-all active:scale-90 ${
+                            hasCustomColor
+                              ? 'text-white/75 hover:text-white hover:bg-white/20'
+                              : 'text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                          }`}
                         >
                           <CheckCircle2 className="w-4 h-4" />
                         </button>
@@ -731,16 +902,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           onClick={(e) => onToggleMute(event.id, e)}
                           aria-label={event.isMuted ? 'Unmute event notifications' : 'Mute event notifications'}
                           title={event.isMuted ? 'Event Muted (Click to Unmute)' : 'Mute Notifications'}
-                          className={`min-w-[36px] min-h-[36px] w-9 h-9 flex items-center justify-center rounded-xl transition-all active:scale-90 ${
-                            event.isMuted
-                              ? 'text-slate-400 dark:text-slate-500 bg-slate-200/60 dark:bg-slate-800/80 hover:bg-slate-300'
-                              : 'text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100/50 dark:hover:bg-slate-700/60'
+                          className={`min-w-[34px] min-h-[34px] w-8 h-8 flex items-center justify-center rounded-xl transition-all active:scale-90 ${
+                            hasCustomColor
+                              ? (event.isMuted
+                                  ? 'text-white/50 bg-black/20 hover:bg-black/30'
+                                  : 'text-white/75 hover:text-white hover:bg-white/20')
+                              : (event.isMuted
+                                  ? 'text-slate-400 dark:text-slate-500 bg-slate-200/60 dark:bg-slate-800/80 hover:bg-slate-300'
+                                  : 'text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100/50 dark:hover:bg-slate-700/60')
                           }`}
                         >
                           {event.isMuted ? (
-                            <BellOff className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+                            <BellOff className="w-4 h-4" />
                           ) : (
-                            <Bell className="w-4 h-4 text-slate-400 group-hover:text-blue-500 dark:text-slate-400" />
+                            <Bell className="w-4 h-4" />
                           )}
                         </button>
                       </div>
@@ -818,25 +993,118 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
 
-        {/* Bottom Sidebar Footer with Trash & Settings */}
-        <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur flex-shrink-0 flex items-center gap-1.5">
-          <button
-            onClick={onOpenTrash}
-            className="flex-1 flex items-center justify-center gap-2 px-2 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            title="Open Trash Bin"
-          >
-            <Trash2 className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-            <span>Trash</span>
-          </button>
-          <button
-            onClick={onOpenSettings}
-            className="flex-1 flex items-center justify-center gap-2 px-2 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            title="Open Settings"
-          >
-            <Settings className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-            <span>Settings</span>
-          </button>
-        </div>
+        {/* Bottom Sidebar Footer */}
+        {isCollapsedMode ? (
+          <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur flex-shrink-0 flex flex-col items-center gap-2">
+            <button
+              onClick={onOpenTemplates}
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title="Templates"
+            >
+              <LayoutTemplate className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onOpenContacts}
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title="Contacts"
+            >
+              <Users className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onOpenVenues}
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title="Venues"
+            >
+              <Building2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onOpenTrash}
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title="Trash"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onOpenSettings}
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title="Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                title="Sign Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="p-2.5 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur flex-shrink-0 space-y-1">
+            {/* Stacked Vertically: Templates, Contacts, Venues */}
+            <button
+              onClick={onOpenTemplates}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
+              title="Manage Templates"
+            >
+              <LayoutTemplate className="w-4 h-4 text-slate-500 dark:text-slate-400 flex-shrink-0" />
+              <span className="truncate">Templates</span>
+            </button>
+
+            <button
+              onClick={onOpenContacts}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
+              title="Open Contact Directory"
+            >
+              <Users className="w-4 h-4 text-slate-500 dark:text-slate-400 flex-shrink-0" />
+              <span className="truncate">Contacts</span>
+            </button>
+
+            <button
+              onClick={onOpenVenues}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
+              title="Manage Workspace Venues"
+            >
+              <Building2 className="w-4 h-4 text-slate-500 dark:text-slate-400 flex-shrink-0" />
+              <span className="truncate">Venues</span>
+            </button>
+
+            {/* Side-by-Side: Trash and Settings taking up 50% width each */}
+            <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800/80">
+              <button
+                onClick={onOpenTrash}
+                className="w-1/2 flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="Open Trash Bin"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 flex-shrink-0" />
+                <span className="truncate">Trash</span>
+              </button>
+
+              <button
+                onClick={onOpenSettings}
+                className="w-1/2 flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="Open Settings"
+              >
+                <Settings className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 flex-shrink-0" />
+                <span className="truncate">Settings</span>
+              </button>
+            </div>
+
+            {/* Clear Logout Button */}
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-xl text-[11px] font-semibold text-slate-400 hover:text-red-500 hover:bg-red-50/50 dark:hover:bg-red-950/30 transition-colors mt-0.5"
+                title="Sign Out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign Out</span>
+              </button>
+            )}
+          </div>
+        )}
       </aside>
     </>
   );

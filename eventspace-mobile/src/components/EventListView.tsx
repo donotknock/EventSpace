@@ -360,27 +360,50 @@ export const EventListView: React.FC<EventListViewProps> = ({
 
             {filteredEvents.map((ev) => {
               const dateRange = formatDateRange(ev.startDate, ev.endDate);
+              const hasCustomColor = Boolean(ev.color && ev.color.trim() && !ev.isCompleted);
+
               return (
                 <div
                   key={ev.id}
                   onClick={() => onSelectEvent(ev)}
+                  style={hasCustomColor ? { backgroundColor: ev.color! } : undefined}
                   className={`group relative p-4 rounded-2xl border transition-all active:scale-[0.99] cursor-pointer shadow-sm hover:shadow-md ${
                     ev.isCompleted
                       ? 'bg-slate-100/60 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800/60 opacity-80'
+                      : hasCustomColor
+                      ? 'border-transparent text-white shadow-md'
                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-500/50 dark:hover:border-blue-500/40'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1.5 flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {getPriorityBadge(ev.priority)}
+                        {hasCustomColor && ev.priority && enablePriority ? (
+                          <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-md bg-black/25 text-white border border-white/20">
+                            {ev.priority} Priority
+                          </span>
+                        ) : (
+                          getPriorityBadge(ev.priority)
+                        )}
                         {ev.department && (
-                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                          <span
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded-md border ${
+                              hasCustomColor
+                                ? 'bg-black/20 text-white border-white/20'
+                                : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20'
+                            }`}
+                          >
                             {ev.department}
                           </span>
                         )}
                         {(ev.term || ev.year) && (
-                          <span className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                          <span
+                            className={`px-2 py-0.5 text-[10px] font-medium rounded-md ${
+                              hasCustomColor
+                                ? 'bg-black/20 text-white/90'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
                             {[ev.term, ev.year].filter(Boolean).join(' ')}
                           </span>
                         )}
@@ -391,19 +414,35 @@ export const EventListView: React.FC<EventListViewProps> = ({
                         )}
                       </div>
 
-                      <h3 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
+                      <h3
+                        className={`text-base font-bold truncate transition-colors ${
+                          hasCustomColor
+                            ? 'text-white'
+                            : 'text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400'
+                        }`}
+                      >
                         {ev.title}
                       </h3>
 
                       {dateRange && (
-                        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <div
+                          className={`flex items-center gap-1.5 text-xs ${
+                            hasCustomColor ? 'text-white/80' : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          <Calendar className={`w-3.5 h-3.5 ${hasCustomColor ? 'text-white/70' : 'text-slate-400'}`} />
                           <span>{dateRange}</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-blue-500 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/30 flex items-center justify-center transition-all shrink-0 self-center">
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 self-center ${
+                        hasCustomColor
+                          ? 'bg-white/20 text-white group-hover:bg-white/30'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-blue-500 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/30'
+                      }`}
+                    >
                       <ChevronRight className="w-4 h-4" />
                     </div>
                   </div>

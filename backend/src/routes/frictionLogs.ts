@@ -1,8 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { requireAuth, requireWorkspace } from '../middleware/auth.js';
 
 export const frictionLogsRouter = Router({ mergeParams: true });
+
+frictionLogsRouter.use(requireAuth);
+frictionLogsRouter.use(requireWorkspace);
 
 const frictionLogSchema = z.object({
   title: z.string().min(1, 'Title is required'),

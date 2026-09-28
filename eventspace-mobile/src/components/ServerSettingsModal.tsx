@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Server,
@@ -9,6 +9,7 @@ import {
   Moon,
   Contrast,
   Type,
+  User,
 } from 'lucide-react';
 import type { ServerConfig } from '../types';
 import { mobileApi } from '../services/api';
@@ -29,7 +30,18 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({
 }) => {
   const [isPinging, setIsPinging] = useState(false);
   const [latency, setLatency] = useState<number | null>(null);
+  const [username, setUsername] = useState<string>(config.username || '');
   const { theme, setTheme, isDyslexic, toggleDyslexic } = useTheme();
+
+  useEffect(() => {
+    if (isOpen && config.serverUrl) {
+      if (!username) {
+        mobileApi.getCurrentUser(config.serverUrl).then((u) => {
+          if (u?.username) setUsername(u.username);
+        }).catch(() => {});
+      }
+    }
+  }, [isOpen, config.serverUrl, username]);
 
   if (!isOpen) return null;
 
@@ -142,11 +154,34 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({
           </div>
         </div>
 
-        {/* Server Info */}
+        {/* Server & User Info */}
         <div className="space-y-3 pt-1">
           <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-            Backend Server
+            User & Backend Server
           </h4>
+
+          {/* Connected User Card */}
+          <div className="p-3.5 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/50 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+                <User className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                  Connected User
+                </span>
+                <span className="text-xs font-bold text-slate-900 dark:text-white">
+                  {username || config.username || 'Admin'}
+                </span>
+              </div>
+            </div>
+            {(config.deviceName || (typeof navigator !== 'undefined' && /iPhone|iPad|Android|Mac/i.test(navigator.userAgent))) && (
+              <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                {config.deviceName || 'Companion Device'}
+              </span>
+            )}
+          </div>
+
           <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 space-y-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Server Host

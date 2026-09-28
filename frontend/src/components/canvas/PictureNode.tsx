@@ -5,6 +5,8 @@ import {
   Camera,
   Trash2,
   Calendar,
+  CheckCircle2,
+  Circle,
   Edit3,
   Check,
   X,
@@ -38,6 +40,12 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
   );
 
   const [isLoadingFile, setIsLoadingFile] = useState(false);
+
+  // Sync internal state when node updates (including dueDate clearing)
+  useEffect(() => {
+    setTitleText(node.title || 'Event Photo');
+    setDateValue(node.dueDate ? new Date(node.dueDate).toISOString().slice(0, 10) : '');
+  }, [node.title, node.dueDate]);
 
   // Close lightbox on Escape key
   useEffect(() => {
@@ -113,7 +121,7 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
       style={{ '--locate-color': '#f43f5e' } as React.CSSProperties}
       className={`group relative w-full h-full min-w-[280px] min-h-[220px] rounded-2xl bg-white dark:bg-slate-900 border-2 border-rose-500/60 dark:border-rose-500/50 hover:border-rose-500 shadow-lg shadow-rose-500/10 transition-all select-none box-border flex flex-col justify-between ${
         nodeData.isLocated ? 'animate-locate-highlight ring-4 ring-offset-2 ring-rose-500' : ''
-      }`}
+      } ${node.isCompleted ? 'opacity-50' : ''}`}
     >
       <NodeResizer
         isVisible={Boolean(props.selected)}
@@ -122,6 +130,19 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
         color="#f43f5e"
         lineClassName="!border-rose-500"
         handleClassName="!w-3 !h-3 !bg-white !border-2 !border-rose-500 !rounded shadow-md"
+        onResizeEnd={(_, params) => {
+          let meta: any = {};
+          try {
+            meta = JSON.parse(node.metadata || '{}');
+          } catch {}
+          onUpdate(props.id, {
+            metadata: JSON.stringify({
+              ...meta,
+              width: Math.round(params.width),
+              height: Math.round(params.height),
+            }),
+          });
+        }}
       />
 
       {/* Exactly 1 Handle per side: Top (target), Left (target), Right (source), Bottom (source) */}
@@ -157,6 +178,21 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
       {/* Header */}
       <div className="p-3 border-b border-slate-100 dark:border-slate-800 rounded-t-2xl flex items-center justify-between gap-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onUpdate(props.id, { isCompleted: !node.isCompleted });
+            }}
+            className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
+              node.isCompleted
+                ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
+                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+            title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
+          >
+            {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+          </button>
           <div className="flex-shrink-0 text-rose-500">
             <Camera className="w-4 h-4" />
           </div>
@@ -287,9 +323,13 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
         ) : (
           <div className="flex items-start justify-between gap-1 group/title min-w-0">
             <h4
-              onClick={() => setIsEditingTitle(true)}
-              className="text-lg font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-rose-600 dark:hover:text-rose-400 transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0"
-              title="Click to edit caption"
+              onDoubleClick={() => setIsEditingTitle(true)}
+              className={`text-lg font-semibold cursor-pointer transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+                node.isCompleted
+                  ? 'line-through text-slate-400 dark:text-slate-500'
+                  : 'text-slate-900 dark:text-slate-100 hover:text-rose-600 dark:hover:text-rose-400'
+              }`}
+              title="Double-click to edit caption"
             >
               {node.title || 'Event Photo'}
             </h4>
@@ -313,16 +353,16 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
 
         {/* Image Display or Upload Area */}
         {hasImage ? (
-          <div className="space-y-2">
+          <div className="space-y-2 flex-1 flex flex-col min-h-0 h-full">
             <div
               onClick={() => setIsLightboxOpen(true)}
-              className="relative group/img overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-black/5 max-h-56 flex items-center justify-center cursor-pointer shadow-sm hover:shadow-md transition-all"
+              className="relative group/img overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-black/5 flex-1 min-h-[140px] w-full flex items-center justify-center cursor-pointer shadow-sm hover:shadow-md transition-all"
               title="Tap or click to view fullscreen"
             >
               <img
                 src={node.content!}
                 alt={node.title}
-                className="w-full h-auto max-h-56 object-cover rounded-xl transition-transform duration-300 group-hover/img:scale-105"
+                className="w-full h-full max-h-[500px] object-contain rounded-xl transition-transform duration-300 group-hover/img:scale-105"
               />
               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
                 <button

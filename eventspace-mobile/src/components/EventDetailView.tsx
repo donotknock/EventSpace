@@ -35,11 +35,27 @@ import {
   User,
   Sun,
   Moon,
-  Contrast,
   Boxes,
   Info,
+  Building2,
+  Video,
+  Contrast,
+  Copy,
+  MapPin,
+  Eye,
+  EyeOff,
+  Tv,
+  UtensilsCrossed,
+  Music,
+  Shield,
+  Wrench,
+  Truck,
+  Users,
+  Megaphone,
 } from 'lucide-react';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { AutoLinkText } from '../utils/linkify';
+import { ContentWithTables } from '../utils/markdownTable';
 import { useTheme } from '../context/ThemeContext';
 import type {
   CanvasEdgeItem,
@@ -54,6 +70,72 @@ import type {
 } from '../types';
 import { mobileApi } from '../services/api';
 import { BlockModal } from './BlockModal';
+
+const CATEGORY_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
+  building: Building2,
+  tv: Tv,
+  utensils: UtensilsCrossed,
+  music: Music,
+  shield: Shield,
+  sparkles: Sparkles,
+  wrench: Wrench,
+  truck: Truck,
+  users: Users,
+  megaphone: Megaphone,
+};
+
+const DEFAULT_CATEGORY_CONFIGS: Record<string, { icon: string; color: string; title: string }> = {
+  FM: { icon: 'building', color: 'emerald', title: 'Facilities Management' },
+  AV: { icon: 'tv', color: 'blue', title: 'Audio / Visual' },
+  CT: { icon: 'utensils', color: 'amber', title: 'Catering & Dining' },
+  SODEXO: { icon: 'utensils', color: 'amber', title: 'Sodexo Services' },
+  CATERING: { icon: 'utensils', color: 'amber', title: 'Catering & Hospitality' },
+  COMMUNICATIONS: { icon: 'megaphone', color: 'purple', title: 'Communications' },
+  General: { icon: 'sparkles', color: 'indigo', title: 'General Overarching' },
+};
+
+function getCategoryConfig(catName: string) {
+  try {
+    const raw = localStorage.getItem('eventspace_category_configs');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed[catName]) {
+        return {
+          icon: parsed[catName].icon || 'building',
+          color: parsed[catName].color || 'emerald',
+          title: parsed[catName].title || catName,
+        };
+      }
+    }
+  } catch {}
+  if (DEFAULT_CATEGORY_CONFIGS[catName]) {
+    return DEFAULT_CATEGORY_CONFIGS[catName];
+  }
+  return { icon: 'sparkles', color: 'indigo', title: catName };
+}
+
+function getCategoryColorClasses(colorName: string) {
+  switch (colorName) {
+    case 'emerald':
+      return { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', border: 'border-emerald-500/30' };
+    case 'blue':
+      return { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/30' };
+    case 'amber':
+      return { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', border: 'border-amber-500/30' };
+    case 'purple':
+      return { bg: 'bg-purple-500/10', text: 'text-purple-600 dark:text-purple-400', border: 'border-purple-500/30' };
+    case 'rose':
+      return { bg: 'bg-rose-500/10', text: 'text-rose-600 dark:text-rose-400', border: 'border-rose-500/30' };
+    case 'indigo':
+      return { bg: 'bg-indigo-500/10', text: 'text-indigo-600 dark:text-indigo-400', border: 'border-indigo-500/30' };
+    case 'cyan':
+      return { bg: 'bg-cyan-500/10', text: 'text-cyan-600 dark:text-cyan-400', border: 'border-cyan-500/30' };
+    case 'orange':
+      return { bg: 'bg-orange-500/10', text: 'text-orange-600 dark:text-orange-400', border: 'border-orange-500/30' };
+    default:
+      return { bg: 'bg-indigo-500/10', text: 'text-indigo-600 dark:text-indigo-400', border: 'border-indigo-500/30' };
+  }
+}
 
 interface EventDetailViewProps {
   event: EventItem;
@@ -116,6 +198,34 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
 
   // Lightbox picture preview
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Media Quick Capture Prompt modal ('picture' | 'audio' | 'video' | null)
+  const [mediaPromptType, setMediaPromptType] = useState<'picture' | 'audio' | 'video' | null>(null);
+
+  // Global Hide Completed state
+  const [hideCompleted, setHideCompleted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('eventspace_mobile_hide_completed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleHideCompleted = () => {
+    setHideCompleted((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('eventspace_mobile_hide_completed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  // Additional file inputs for quick capture media prompts
+  const pictureUploadInputRef = useRef<HTMLInputElement>(null);
+  const audioUploadFileInputRef = useRef<HTMLInputElement>(null);
+  const videoCameraInputRef = useRef<HTMLInputElement>(null);
+  const videoUploadInputRef = useRef<HTMLInputElement>(null);
 
   // Quick Capture Carousel horizontal scroll state & edge indicators
   const quickCaptureScrollRef = useRef<HTMLDivElement>(null);
@@ -436,6 +546,82 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
     e.target.value = '';
   };
 
+  const handleAudioUploadInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !eventData) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const base64 = evt.target?.result as string;
+      if (base64) {
+        const title = file.name.replace(/\.[^/.]+$/, '') || 'Voice Memo';
+        const meta = JSON.stringify({
+          audioUrl: base64,
+          audioName: file.name,
+          summary: 'Uploaded audio recording',
+        });
+        const created = await mobileApi.createNode(config.serverUrl, initialEvent.id, {
+          type: 'audio',
+          title,
+          content: '',
+          metadata: meta,
+        });
+        setEventData({
+          ...eventData,
+          nodes: [...eventData.nodes, created],
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleVideoFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !eventData) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const base64 = evt.target?.result as string;
+      if (base64) {
+        const title = file.name.replace(/\.[^/.]+$/, '') || `Video ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        const created = await mobileApi.createNode(config.serverUrl, initialEvent.id, {
+          type: 'video',
+          title,
+          content: base64,
+        });
+        setEventData({
+          ...eventData,
+          nodes: [...eventData.nodes, created],
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleDuplicateNode = async (node: CanvasNodeItem) => {
+    if (!eventData) return;
+    try {
+      const copyTitle = node.title.endsWith(' (Copy)') ? node.title : `${node.title} (Copy)`;
+      const created = await mobileApi.createNode(config.serverUrl, initialEvent.id, {
+        type: node.type,
+        title: copyTitle,
+        content: node.content || null,
+        xPosition: (node.xPosition || 100) + 40,
+        yPosition: (node.yPosition || 100) + 40,
+        dueDate: null, // Note: Strictly null by default!
+        priority: node.priority || null,
+        assignee: node.assignee || null,
+        metadata: node.metadata || null,
+      });
+      setEventData((prev) => (prev ? { ...prev, nodes: [...prev.nodes, created] } : prev));
+    } catch (err: any) {
+      console.error('Failed to duplicate block:', err);
+      alert('Failed to duplicate block: ' + err.message);
+    }
+  };
+
   // Native Audio Recording
   const startRecordingAudio = async () => {
     try {
@@ -595,35 +781,43 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
         return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">Chaser</span>;
       case 'info':
         return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">Info</span>;
-      case 'note':
-        return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">Note</span>;
+      case 'venue':
+        return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">Venue</span>;
       case 'picture':
         return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">Picture</span>;
       case 'audio':
         return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">Audio</span>;
+      case 'video':
+        return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20">Video</span>;
+      default:
+        return <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">Note</span>;
     }
   };
 
   const getCardBorderClass = (type: NodeType) => {
     switch (type) {
       case 'task':
-        return 'border-blue-500/40 hover:border-blue-500';
+        return 'border-blue-400 dark:border-blue-600 bg-blue-50/20 dark:bg-blue-950/10 hover:border-blue-500';
       case 'chaser':
-        return 'border-amber-500/50 hover:border-amber-500 bg-amber-500/[0.02]';
+        return 'border-amber-400 dark:border-amber-600 bg-amber-50/20 dark:bg-amber-950/10 hover:border-amber-500';
       case 'info':
-        return 'border-emerald-500/40 hover:border-emerald-500';
-      case 'note':
-        return 'border-slate-300 dark:border-slate-700 hover:border-slate-400';
+        return 'border-emerald-400 dark:border-emerald-600 bg-emerald-50/20 dark:bg-emerald-950/10 hover:border-emerald-500';
+      case 'venue':
+        return 'border-indigo-400 dark:border-indigo-600 bg-indigo-50/20 dark:bg-indigo-950/10 hover:border-indigo-500';
       case 'picture':
-        return 'border-rose-500/40 hover:border-rose-500';
+        return 'border-rose-400 dark:border-rose-600 bg-rose-50/20 dark:bg-rose-950/10 hover:border-rose-500';
       case 'audio':
-        return 'border-purple-500/40 hover:border-purple-500';
+        return 'border-purple-400 dark:border-purple-600 bg-purple-50/20 dark:bg-purple-950/10 hover:border-purple-500';
+      case 'video':
+        return 'border-orange-400 dark:border-orange-600 bg-orange-50/20 dark:bg-orange-950/10 hover:border-orange-500';
+      default:
+        return 'border-slate-300 dark:border-slate-700 bg-slate-50/20 dark:bg-slate-900/10 hover:border-slate-400';
     }
   };
 
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden">
-      {/* Hidden File Input for Picture fallback */}
+      {/* Hidden File Inputs for Picture/Audio/Video captures & uploads */}
       <input
         ref={pictureFileInputRef}
         type="file"
@@ -631,6 +825,35 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
         capture="environment"
         className="hidden"
         onChange={handleFileInputChange}
+      />
+      <input
+        ref={pictureUploadInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
+      <input
+        ref={audioUploadFileInputRef}
+        type="file"
+        accept="audio/*"
+        className="hidden"
+        onChange={handleAudioUploadInputChange}
+      />
+      <input
+        ref={videoCameraInputRef}
+        type="file"
+        accept="video/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleVideoFileInputChange}
+      />
+      <input
+        ref={videoUploadInputRef}
+        type="file"
+        accept="video/*"
+        className="hidden"
+        onChange={handleVideoFileInputChange}
       />
 
       {/* Top Header */}
@@ -761,50 +984,86 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
               {/* Collapsible Content */}
               {!isChecklistsCollapsed && (
                 <div className="px-4 pb-4 pt-1 space-y-3 border-t border-slate-100 dark:border-slate-800/60">
-                  {/* Checklist Items List */}
+                  {/* Grouped Checklist Items by Category */}
                   {eventData?.checklists && eventData.checklists.length > 0 ? (
-                    <div className="space-y-2 pt-2">
-                      {eventData.checklists.map((chk) => (
-                        <div
-                          key={chk.id}
-                          className="flex items-start justify-between gap-2.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-700/50 hover:border-slate-300 transition-colors"
-                        >
-                          <button
-                            onClick={() => handleToggleChecklist(chk)}
-                            className="mt-0.5 text-slate-400 hover:text-blue-500 transition-colors shrink-0"
-                          >
-                            {chk.isCompleted ? (
-                              <CheckCircle2 className="w-4 h-4 text-emerald-500 fill-emerald-500/20" />
-                            ) : (
-                              <Circle className="w-4 h-4" />
-                            )}
-                          </button>
+                    <div className="space-y-4 pt-2">
+                      {Array.from(new Set(eventData.checklists.map((c) => c.category || 'General'))).map((catName) => {
+                        const catConfig = getCategoryConfig(catName);
+                        const CatIcon = CATEGORY_ICON_MAP[catConfig.icon] || Sparkles;
+                        const colorStyles = getCategoryColorClasses(catConfig.color);
+                        const catItems = eventData.checklists.filter((c) => (c.category || 'General') === catName);
+                        const completedCount = catItems.filter((c) => c.isCompleted).length;
 
-                          <div className="flex-1 min-w-0">
-                            <span
-                              className={`text-base font-semibold leading-snug block ${
-                                chk.isCompleted
-                                  ? 'line-through text-slate-400 dark:text-slate-500 font-normal'
-                                  : 'text-slate-800 dark:text-slate-100'
-                              }`}
-                            >
-                              {chk.content}
-                            </span>
-                            {chk.category && (
-                              <span className="text-[10px] font-semibold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider">
-                                {chk.category}
+                        return (
+                          <div
+                            key={catName}
+                            className={`rounded-2xl border p-3 space-y-2.5 bg-slate-50/70 dark:bg-slate-800/40 ${colorStyles.border}`}
+                          >
+                            {/* Category Header with Full Title, Custom Icon & Color */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className={`w-6 h-6 rounded-lg ${colorStyles.bg} ${colorStyles.text} flex items-center justify-center shrink-0`}>
+                                  <CatIcon className="w-3.5 h-3.5" />
+                                </div>
+                                <div>
+                                  <h3 className="text-xs font-bold text-slate-900 dark:text-white leading-tight">
+                                    {catConfig.title}
+                                  </h3>
+                                  {catName !== catConfig.title && (
+                                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                                      {catName}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-700/80 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-600">
+                                {completedCount}/{catItems.length}
                               </span>
-                            )}
-                          </div>
+                            </div>
 
-                          <button
-                            onClick={() => handleDeleteChecklistItem(chk.id)}
-                            className="text-slate-400 hover:text-rose-500 p-1 shrink-0"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
+                            {/* Checklist items in this category */}
+                            <div className="space-y-1.5">
+                              {catItems.map((chk) => (
+                                <div
+                                  key={chk.id}
+                                  className="flex items-start justify-between gap-2.5 p-2 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 hover:border-slate-300 transition-colors"
+                                >
+                                  <button
+                                    onClick={() => handleToggleChecklist(chk)}
+                                    className="mt-0.5 text-slate-400 hover:text-blue-500 transition-colors shrink-0"
+                                  >
+                                    {chk.isCompleted ? (
+                                      <CheckCircle2 className="w-4 h-4 text-emerald-500 fill-emerald-500/20" />
+                                    ) : (
+                                      <Circle className="w-4 h-4" />
+                                    )}
+                                  </button>
+
+                                  <div className="flex-1 min-w-0">
+                                    <span
+                                      className={`text-sm font-medium leading-snug block ${
+                                        chk.isCompleted
+                                          ? 'line-through text-slate-400 dark:text-slate-500 font-normal'
+                                          : 'text-slate-800 dark:text-slate-100'
+                                      }`}
+                                    >
+                                      {chk.content}
+                                    </span>
+                                  </div>
+
+                                  <button
+                                    onClick={() => handleDeleteChecklistItem(chk.id)}
+                                    className="text-slate-400 hover:text-rose-500 p-1 shrink-0"
+                                    title="Delete checklist item"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="text-xs text-slate-400 py-2 italic text-center">
@@ -956,10 +1215,42 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       </span>
                     </button>
 
-                    {/* 4. Audio */}
+                    {/* 4. Venue */}
                     <button
                       type="button"
-                      onClick={isRecordingAudio ? stopRecordingAudio : startRecordingAudio}
+                      onClick={() => {
+                        setDefaultBlockType('venue');
+                        setEditingNode(null);
+                        setIsBlockModalOpen(true);
+                      }}
+                      className="quick-capture-carousel-card w-20 h-20 min-w-[80px] max-w-[80px] aspect-square rounded-2xl p-2 bg-indigo-50/80 hover:bg-indigo-100/80 dark:bg-indigo-950/30 dark:hover:bg-indigo-950/50 border border-indigo-200/80 dark:border-indigo-900/60 flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0 shadow-sm"
+                    >
+                      <div className="w-8 h-8 rounded-xl bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center shrink-0 text-indigo-600 dark:text-indigo-400">
+                        <Building2 className="w-4 h-4" />
+                      </div>
+                      <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 leading-none">
+                        Venue
+                      </span>
+                    </button>
+
+                    {/* 5. Picture */}
+                    <button
+                      type="button"
+                      onClick={() => setMediaPromptType('picture')}
+                      className="quick-capture-carousel-card w-20 h-20 min-w-[80px] max-w-[80px] aspect-square rounded-2xl p-2 bg-rose-50/80 hover:bg-rose-100/80 dark:bg-rose-950/30 dark:hover:bg-rose-950/50 border border-rose-200/80 dark:border-rose-900/60 flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0 shadow-sm"
+                    >
+                      <div className="w-8 h-8 rounded-xl bg-rose-100 dark:bg-rose-900/60 flex items-center justify-center shrink-0 text-rose-600 dark:text-rose-400">
+                        <Camera className="w-4 h-4" />
+                      </div>
+                      <span className="text-xs font-bold text-rose-700 dark:text-rose-300 leading-none">
+                        Picture
+                      </span>
+                    </button>
+
+                    {/* 6. Audio */}
+                    <button
+                      type="button"
+                      onClick={isRecordingAudio ? stopRecordingAudio : () => setMediaPromptType('audio')}
                       className={`quick-capture-carousel-card w-20 h-20 min-w-[80px] max-w-[80px] aspect-square rounded-2xl p-2 border flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0 shadow-sm ${
                         isRecordingAudio
                           ? 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 animate-pulse'
@@ -984,17 +1275,17 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       </span>
                     </button>
 
-                    {/* 5. Picture */}
+                    {/* 7. Video */}
                     <button
                       type="button"
-                      onClick={handleSnapPicture}
-                      className="quick-capture-carousel-card w-20 h-20 min-w-[80px] max-w-[80px] aspect-square rounded-2xl p-2 bg-rose-50/80 hover:bg-rose-100/80 dark:bg-rose-950/30 dark:hover:bg-rose-950/50 border border-rose-200/80 dark:border-rose-900/60 flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0 shadow-sm"
+                      onClick={() => setMediaPromptType('video')}
+                      className="quick-capture-carousel-card w-20 h-20 min-w-[80px] max-w-[80px] aspect-square rounded-2xl p-2 bg-orange-50/80 hover:bg-orange-100/80 dark:bg-orange-950/30 dark:hover:bg-orange-950/50 border border-orange-200/80 dark:border-orange-900/60 flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0 shadow-sm"
                     >
-                      <div className="w-8 h-8 rounded-xl bg-rose-100 dark:bg-rose-900/60 flex items-center justify-center shrink-0 text-rose-600 dark:text-rose-400">
-                        <Camera className="w-4 h-4" />
+                      <div className="w-8 h-8 rounded-xl bg-orange-100 dark:bg-orange-900/60 flex items-center justify-center shrink-0 text-orange-600 dark:text-orange-400">
+                        <Video className="w-4 h-4" />
                       </div>
-                      <span className="text-xs font-bold text-rose-700 dark:text-rose-300 leading-none">
-                        Picture
+                      <span className="text-xs font-bold text-orange-700 dark:text-orange-300 leading-none">
+                        Video
                       </span>
                     </button>
                   </div>
@@ -1021,16 +1312,33 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
             <div className="space-y-3 pt-1">
               <div className="flex items-center justify-between px-1">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  Building Blocks ({eventData?.nodes?.length || 0})
+                  Building Blocks ({eventData?.nodes?.filter((n) => (hideCompleted ? !n.isCompleted : true)).length || 0})
                 </span>
-                <button
-                  onClick={() => loadEventDetails(true)}
-                  disabled={isRefreshing}
-                  className="text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 font-semibold"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  <span>Refresh</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* Global Hide Completed toggle */}
+                  <button
+                    type="button"
+                    onClick={toggleHideCompleted}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border ${
+                      hideCompleted
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60'
+                    }`}
+                    title={hideCompleted ? 'Showing incomplete blocks only' : 'Hide completed blocks and subtasks'}
+                  >
+                    {hideCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{hideCompleted ? 'Hiding Completed' : 'Hide Completed'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => loadEventDetails(true)}
+                    disabled={isRefreshing}
+                    className="text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 font-semibold"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    <span className="hidden sm:inline">Refresh</span>
+                  </button>
+                </div>
               </div>
 
               {(!eventData?.nodes || eventData.nodes.length === 0) ? (
@@ -1046,7 +1354,9 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                   </div>
                 </div>
               ) : (
-                eventData.nodes.map((node) => {
+                eventData.nodes
+                  .filter((n) => (hideCompleted ? !n.isCompleted : true))
+                  .map((node) => {
                   // Find connected incoming and outgoing links
                   const incomingEdges = eventData.edges?.filter((e) => e.targetId === node.id) || [];
                   const outgoingEdges = eventData.edges?.filter((e) => e.sourceId === node.id) || [];
@@ -1062,6 +1372,10 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       }
                     } catch {}
                   }
+
+                  const displayedSubtasks = hideCompleted
+                    ? subtasksList.filter((s) => s.style === 'bullet' || !s.done)
+                    : subtasksList;
 
                   const formattedDate = node.dueDate
                     ? new Date(node.dueDate).toLocaleDateString(undefined, {
@@ -1098,38 +1412,46 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
 
                         <div className="flex items-center gap-1">
                           <button
+                            onClick={() => handleDuplicateNode(node)}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center transition-colors"
+                            title="Duplicate block"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <button
                             onClick={() => {
                               setEditingNode(node);
                               setDefaultBlockType(node.type);
                               setIsBlockModalOpen(true);
                             }}
                             className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center justify-center transition-colors"
+                            title="Edit block"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDeleteNode(node.id)}
                             className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-rose-500 flex items-center justify-center transition-colors"
+                            title="Delete block"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
 
-                      {/* Title & Checkbox for Tasks */}
+                      {/* Title & Global Completion Checkbox for ALL Blocks */}
                       <div className="flex items-start gap-2.5">
-                        {(node.type === 'task' || node.type === 'chaser') && (
-                          <button
-                            onClick={() => handleToggleNodeCompleted(node)}
-                            className="mt-1 text-slate-400 hover:text-blue-500 shrink-0 transition-colors"
-                          >
-                            {node.isCompleted ? (
-                              <CheckCircle2 className="w-5 h-5 text-emerald-500 fill-emerald-500/20" />
-                            ) : (
-                              <Circle className="w-5 h-5" />
-                            )}
-                          </button>
-                        )}
+                        <button
+                          onClick={() => handleToggleNodeCompleted(node)}
+                          className="mt-1 text-slate-400 hover:text-blue-500 shrink-0 transition-colors"
+                          title={node.isCompleted ? 'Mark incomplete' : 'Mark completed'}
+                        >
+                          {node.isCompleted ? (
+                            <CheckCircle2 className="w-5 h-5 text-emerald-500 fill-emerald-500/20" />
+                          ) : (
+                            <Circle className="w-5 h-5 text-slate-400 hover:text-blue-500" />
+                          )}
+                        </button>
 
                         <div className="flex-1 min-w-0">
                           <h3
@@ -1142,22 +1464,22 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                             {node.title}
                           </h3>
 
-                          {/* Node Content / Description */}
+                          {/* Node Content / Description with Markdown Tables */}
                           {node.content && node.type !== 'picture' && (
-                            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 leading-relaxed">
-                              {node.content}
-                            </p>
+                            <div className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 break-all [overflow-wrap:anywhere] min-w-0 leading-relaxed">
+                              <ContentWithTables content={node.content} />
+                            </div>
                           )}
                         </div>
                       </div>
 
-                      {/* Subtasks (if any) */}
-                      {subtasksList.length > 0 && (
+                      {/* Subtasks (if any, filtered by hideCompleted) */}
+                      {displayedSubtasks.length > 0 && (
                         <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/50 space-y-1.5">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
                             Subtasks ({subtasksList.filter((s) => s.style !== 'bullet' && s.done).length}/{subtasksList.filter((s) => s.style !== 'bullet').length})
                           </span>
-                          {subtasksList.map((st, idx) => {
+                          {displayedSubtasks.map((st, idx) => {
                             const subtaskText = st.label || st.text || 'Untitled note';
                             const isBullet = st.style === 'bullet';
                             const isSquare = st.style === 'square';
@@ -1253,10 +1575,10 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                                       }`}
                                       title="Tap to edit subtask"
                                     >
-                                      {subtaskText}
+                                      <AutoLinkText text={subtaskText} />
                                     </span>
 
-                                    {!isBullet && formattedSubDate && (
+                                    {formattedSubDate && (
                                       <span className="text-[10px] text-slate-400 font-medium px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-700/60 shrink-0">
                                         {formattedSubDate}
                                       </span>
@@ -1279,6 +1601,91 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                               </div>
                             );
                           })}
+                        </div>
+                      )}
+
+                      {/* Venue Node Logistics Card (Venue Parity) */}
+                      {node.type === 'venue' && (
+                        <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900/50 space-y-2 text-xs">
+                          {nodeMetadataObj.location && (
+                            <div className="flex items-start gap-2">
+                              <MapPin className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                  Location
+                                </span>
+                                <span className="font-semibold text-slate-900 dark:text-white">
+                                  {nodeMetadataObj.location}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {(nodeMetadataObj.setupTime || nodeMetadataObj.teardownTime) && (
+                            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-indigo-100 dark:border-indigo-900/40">
+                              {nodeMetadataObj.setupTime && (
+                                <div className="flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                  <div>
+                                    <span className="text-[10px] text-slate-400 block">Setup</span>
+                                    <span className="font-semibold text-slate-900 dark:text-white">
+                                      {nodeMetadataObj.setupTime}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              {nodeMetadataObj.teardownTime && (
+                                <div className="flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                  <div>
+                                    <span className="text-[10px] text-slate-400 block">Teardown</span>
+                                    <span className="font-semibold text-slate-900 dark:text-white">
+                                      {nodeMetadataObj.teardownTime}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {nodeMetadataObj.contactPerson && (
+                            <div className="flex items-center gap-2 pt-1 border-t border-indigo-100 dark:border-indigo-900/40">
+                              <User className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">Contact</span>
+                                <span className="font-semibold text-slate-900 dark:text-white">
+                                  {nodeMetadataObj.contactPerson}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Video Node Player / Embed */}
+                      {node.type === 'video' && node.content && (
+                        <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black aspect-video flex items-center justify-center">
+                          {node.content.includes('youtube.com') || node.content.includes('youtu.be') ? (
+                            <iframe
+                              src={node.content.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')}
+                              className="w-full h-full border-0"
+                              allowFullScreen
+                              title={node.title}
+                            />
+                          ) : node.content.includes('vimeo.com') ? (
+                            <iframe
+                              src={`https://player.vimeo.com/video/${node.content.split('/').pop()}`}
+                              className="w-full h-full border-0"
+                              allowFullScreen
+                              title={node.title}
+                            />
+                          ) : (
+                            <video
+                              src={node.content}
+                              controls
+                              className="w-full h-full object-contain"
+                            />
+                          )}
                         </div>
                       )}
 
@@ -1443,9 +1850,141 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
           setEditingNode(null);
         }}
         onSave={handleSaveBlock}
+        onDuplicate={handleDuplicateNode}
+        serverUrl={config.serverUrl}
         initialNode={editingNode}
         defaultType={defaultBlockType}
       />
+
+      {/* Media Quick Capture Prompts Modal (Upload vs Take New) */}
+      {mediaPromptType && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setMediaPromptType(null)}
+        >
+          <div
+            className="w-full sm:max-w-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-t-3xl sm:rounded-3xl p-5 space-y-4 animate-slideUp text-slate-900 dark:text-white safe-bottom shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                {mediaPromptType === 'picture' && <Camera className="w-5 h-5 text-rose-500" />}
+                {mediaPromptType === 'audio' && <Mic className="w-5 h-5 text-purple-500" />}
+                {mediaPromptType === 'video' && <Video className="w-5 h-5 text-orange-500" />}
+                <h3 className="text-sm font-bold capitalize">
+                  {mediaPromptType === 'picture'
+                    ? 'Picture Capture'
+                    : mediaPromptType === 'audio'
+                    ? 'Audio Memo'
+                    : 'Video Capture'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setMediaPromptType(null)}
+                className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {mediaPromptType === 'picture' && (
+                <>
+                  <button
+                    onClick={() => {
+                      setMediaPromptType(null);
+                      handleSnapPicture();
+                    }}
+                    className="w-full p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 font-bold text-xs flex items-center gap-2.5 transition-colors"
+                  >
+                    <Camera className="w-4 h-4 text-rose-500" />
+                    <span>Take New Photo</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMediaPromptType(null);
+                      pictureUploadInputRef.current?.click();
+                    }}
+                    className="w-full p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-2.5 transition-colors"
+                  >
+                    <ImageIcon className="w-4 h-4 text-slate-500" />
+                    <span>Upload Photo</span>
+                  </button>
+                </>
+              )}
+
+              {mediaPromptType === 'audio' && (
+                <>
+                  <button
+                    onClick={() => {
+                      setMediaPromptType(null);
+                      startRecordingAudio();
+                    }}
+                    className="w-full p-3 rounded-2xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-900/60 text-purple-700 dark:text-purple-300 font-bold text-xs flex items-center gap-2.5 transition-colors"
+                  >
+                    <Mic className="w-4 h-4 text-purple-500" />
+                    <span>Record Voice Note (Take New)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMediaPromptType(null);
+                      audioUploadFileInputRef.current?.click();
+                    }}
+                    className="w-full p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-2.5 transition-colors"
+                  >
+                    <Volume2 className="w-4 h-4 text-slate-500" />
+                    <span>Upload Audio File</span>
+                  </button>
+                </>
+              )}
+
+              {mediaPromptType === 'video' && (
+                <>
+                  <button
+                    onClick={() => {
+                      setMediaPromptType(null);
+                      setDefaultBlockType('video');
+                      setEditingNode(null);
+                      setIsBlockModalOpen(true);
+                    }}
+                    className="w-full p-3 rounded-2xl bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/60 border border-orange-200 dark:border-orange-900/60 text-orange-700 dark:text-orange-300 font-bold text-xs flex items-center gap-2.5 transition-colors"
+                  >
+                    <LinkIcon className="w-4 h-4 text-orange-500" />
+                    <span>Embed Video (URL)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMediaPromptType(null);
+                      videoCameraInputRef.current?.click();
+                    }}
+                    className="w-full p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-2.5 transition-colors"
+                  >
+                    <Video className="w-4 h-4 text-orange-500" />
+                    <span>Take New Video</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMediaPromptType(null);
+                      videoUploadInputRef.current?.click();
+                    }}
+                    className="w-full p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-2.5 transition-colors"
+                  >
+                    <FileText className="w-4 h-4 text-slate-500" />
+                    <span>Upload Video File</span>
+                  </button>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={() => setMediaPromptType(null)}
+              className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Picture Lightbox Preview Modal */}
       {previewImage && (

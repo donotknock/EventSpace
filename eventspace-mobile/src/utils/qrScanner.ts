@@ -42,7 +42,7 @@ export function parsePairingPayload(payload: string): ParsedPairingData | null {
     return { serverUrl: trimmed };
   }
 
-  if (trimmed.startsWith('EVSP-')) {
+  if (trimmed.startsWith('EVSP-') || /^\d{6}$/.test(trimmed)) {
     return { pin: trimmed };
   }
 

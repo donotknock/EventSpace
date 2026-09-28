@@ -14,6 +14,7 @@ import {
   BackgroundVariant,
   useReactFlow,
   MarkerType,
+  ConnectionMode,
 } from '@xyflow/react';
 import { FullEventDetails, CanvasNodeItem, NodeType, FrictionLogItem, Severity } from '../types';
 import { api } from '../services/api';
@@ -23,9 +24,12 @@ import { InfoNode } from './canvas/InfoNode';
 import { NoteNode } from './canvas/NoteNode';
 import { PictureNode } from './canvas/PictureNode';
 import { AudioNode } from './canvas/AudioNode';
+import { VenueNode } from './canvas/VenueNode';
+import { VideoNode } from './canvas/VideoNode';
 import { RemovableEdge } from './canvas/RemovableEdge';
 import { ContextMenu } from './canvas/ContextMenu';
 import { BuildingBlocksPalette } from './canvas/BuildingBlocksPalette';
+import { formatEventDate } from '../utils/date';
 import {
   AlertTriangle,
   ChevronLeft,
@@ -46,7 +50,10 @@ import { useSettings } from '../context/SettingsContext';
 interface CanvasZoneProps {
   activeEvent: FullEventDetails | null;
   onRefreshEvent: () => void;
+  onUpdateNodeLocal?: (nodeId: string, updates: Partial<CanvasNodeItem>) => void;
+  onOpenEditEvent?: () => void;
   locatedNodeId?: string | null;
+  isReadOnly?: boolean;
 }
 
 const nodeTypes = {
@@ -56,6 +63,8 @@ const nodeTypes = {
   note: NoteNode,
   audio: AudioNode,
   picture: PictureNode,
+  venue: VenueNode,
+  video: VideoNode,
 };
 
 const getBlockBrandColor = (type?: string): string => {
@@ -70,6 +79,10 @@ const getBlockBrandColor = (type?: string): string => {
       return '#8b5cf6'; // Violet / Purple
     case 'picture':
       return '#f43f5e'; // Rose
+    case 'venue':
+      return '#0d9488'; // Teal
+    case 'video':
+      return '#ef4444'; // Red
     case 'note':
     default:
       return '#64748b'; // Slate / Neutral
@@ -96,8 +109,18 @@ const defaultEdgeOptions = {
 const CanvasInner: React.FC<{
   activeEvent: FullEventDetails;
   onRefreshEvent: () => void;
+  onUpdateNodeLocal?: (nodeId: string, updates: Partial<CanvasNodeItem>) => void;
+  onOpenEditEvent?: () => void;
   locatedNodeId?: string | null;
-}> = ({ activeEvent, onRefreshEvent, locatedNodeId }) => {
+  isReadOnly?: boolean;
+}> = ({
+  activeEvent,
+  onRefreshEvent,
+  onUpdateNodeLocal,
+  onOpenEditEvent,
+  locatedNodeId,
+  isReadOnly = false,
+}) => {
   const { screenToFlowPosition, setViewport, fitView, setCenter } = useReactFlow();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { enablePriority } = useSettings();
@@ -113,6 +136,7 @@ const CanvasInner: React.FC<{
     x: number;
     y: number;
     flowPos: { x: number; y: number };
+    targetNodeId?: string | null;
   } | null>(null);
 
   // Friction log pull-out drawer state
@@ -180,14 +204,21 @@ const CanvasInner: React.FC<{
         })
       );
 
+      if (onUpdateNodeLocal) {
+        onUpdateNodeLocal(nodeId, updates);
+      }
+
       try {
         await api.updateNode(activeEvent.id, nodeId, updates);
+        if (updates.dueDate !== undefined) {
+          onRefreshEvent();
+        }
       } catch (err) {
         console.error('Failed to update node:', err);
         onRefreshEvent();
       }
     },
-    [activeEvent.id, setNodes, onRefreshEvent]
+    [activeEvent.id, setNodes, onRefreshEvent, onUpdateNodeLocal]
   );
 
   // Delete node handler
@@ -233,21 +264,95 @@ const CanvasInner: React.FC<{
     [activeEvent.id]
   );
 
+  // Block duplication handler
+  const handleDuplicateNode = useCallback(
+    async (nodeId: string) => {
+      const targetNode =
+        (activeEvent.nodes || []).find((n) => n.id === nodeId) ||
+        nodes.find((n) => n.id === nodeId);
+      if (!targetNode) return;
+
+      const targetData = (targetNode as any).data?.node || targetNode;
+      const x = ('position' in targetNode ? targetNode.position.x : targetNode.xPosition) + 30;
+      const y = ('position' in targetNode ? targetNode.position.y : targetNode.yPosition) + 30;
+
+      try {
+        await api.createNode(activeEvent.id, {
+          type: targetData.type || 'task',
+          title: `${targetData.title || 'Block'} (Copy)`,
+          content: targetData.content || null,
+          metadata: targetData.metadata || null,
+          xPosition: Math.round(x),
+          yPosition: Math.round(y),
+          dueDate: null, // No default dates
+          isCompleted: false,
+        });
+        onRefreshEvent();
+      } catch (err) {
+        console.error('Failed to duplicate node:', err);
+      }
+    },
+    [activeEvent.id, activeEvent.nodes, nodes, onRefreshEvent]
+  );
+
+  const handleDuplicateNodeRef = useRef(handleDuplicateNode);
+  handleDuplicateNodeRef.current = handleDuplicateNode;
+
+  // Keyboard shortcut Cmd+D / Ctrl+D to duplicate selected node
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'd' || e.key === 'D')) {
+        const activeEl = document.activeElement;
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+          return;
+        }
+        const selectedNode = nodes.find((n) => n.selected);
+        if (selectedNode) {
+          e.preventDefault();
+          handleDuplicateNode(selectedNode.id);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [nodes, handleDuplicateNode]);
+
+  // Handler refs to keep initial seed effect strictly dependent on activeEvent.id
+  const handleUpdateNodeRef = useRef(handleUpdateNode);
+  handleUpdateNodeRef.current = handleUpdateNode;
+
+  const handleDeleteNodeRef = useRef(handleDeleteNode);
+  handleDeleteNodeRef.current = handleDeleteNode;
+
+  const handleDeleteEdgeRef = useRef(handleDeleteEdge);
+  handleDeleteEdgeRef.current = handleDeleteEdge;
+
   // RENDER SEED DATA IMMEDIATELY
   useEffect(() => {
     if (!activeEvent) return;
 
-    const initialNodes: Node[] = (activeEvent.nodes || []).map((n) => ({
-      id: n.id,
-      type: n.type || 'task',
-      position: { x: n.xPosition, y: n.yPosition },
-      data: {
-        node: n,
-        onUpdate: handleUpdateNode,
-        onDelete: handleDeleteNode,
-        isLocated: n.id === locatedNodeId,
-      },
-    }));
+    const initialNodes: Node[] = (activeEvent.nodes || []).map((n) => {
+      let meta: any = {};
+      if (n.metadata) {
+        try {
+          meta = JSON.parse(n.metadata);
+        } catch {}
+      }
+      return {
+        id: n.id,
+        type: n.type || 'task',
+        position: { x: n.xPosition, y: n.yPosition },
+        style: meta.width && meta.height ? { width: meta.width, height: meta.height } : undefined,
+        data: {
+          node: n,
+          isReadOnly,
+          onUpdate: (id: string, updates: Partial<CanvasNodeItem>) => handleUpdateNodeRef.current(id, updates),
+          onDelete: (id: string) => handleDeleteNodeRef.current(id),
+          onDuplicate: (id: string) => handleDuplicateNodeRef.current(id),
+          isLocated: n.id === locatedNodeId,
+        },
+      };
+    });
 
     const initialEdges: Edge[] = (activeEvent.edges || []).map((e) => {
       const sourceNode = (activeEvent.nodes || []).find((n) => n.id === e.sourceId);
@@ -270,7 +375,7 @@ const CanvasInner: React.FC<{
           height: 18,
         },
         data: {
-          onDelete: handleDeleteEdge,
+          onDelete: (edgeId: string) => handleDeleteEdgeRef.current(edgeId),
           color: brandColor,
         },
       };
@@ -291,24 +396,64 @@ const CanvasInner: React.FC<{
     } else {
       setTimeout(() => fitView({ padding: 0.3 }), 50);
     }
-  }, [activeEvent.id, handleUpdateNode, handleDeleteNode, handleDeleteEdge]);
+  }, [activeEvent.id, isReadOnly]);
+
+  // Track connection start drag to enforce strictly directional A -> B connections
+  const connectStartRef = useRef<{
+    nodeId: string | null;
+    handleId: string | null;
+  } | null>(null);
+
+  const onConnectStart = useCallback((_event: any, params: any) => {
+    connectStartRef.current = {
+      nodeId: params.nodeId || null,
+      handleId: params.handleId || null,
+    };
+  }, []);
+
+  const onConnectEnd = useCallback(() => {
+    connectStartRef.current = null;
+  }, []);
 
   // Connectors with Directional Arrow & Block Brand Colors
   const onConnect = useCallback(
     async (connection: Connection) => {
+      if (isReadOnly) return;
       if (!connection.source || !connection.target) return;
+      // Prevent blocks from connecting to themselves
+      if (connection.source === connection.target) return;
+
+      let sourceId = connection.source;
+      let targetId = connection.target;
+      let sourceHandle = connection.sourceHandle;
+      let targetHandle = connection.targetHandle;
+
+      // If user dragged from Node A to Node B, guarantee source is A and target is B
+      if (connectStartRef.current?.nodeId) {
+        const dragStartNodeId = connectStartRef.current.nodeId;
+        if (connection.source !== dragStartNodeId && connection.target === dragStartNodeId) {
+          sourceId = connection.target;
+          targetId = connection.source;
+          sourceHandle = connection.targetHandle;
+          targetHandle = connection.sourceHandle;
+        }
+      }
+      connectStartRef.current = null;
 
       const sourceNode =
-        (activeEvent.nodes || []).find((n) => n.id === connection.source) ||
-        nodes.find((n) => n.id === connection.source);
+        (activeEvent.nodes || []).find((n) => n.id === sourceId) ||
+        nodes.find((n) => n.id === sourceId);
       const brandColor = getBlockBrandColor(
         (sourceNode as any)?.type || (sourceNode as any)?.data?.node?.type
       );
 
       const newEdgeId = `edge-${Date.now()}`;
       const newEdge: Edge = {
-        ...connection,
         id: newEdgeId,
+        source: sourceId,
+        target: targetId,
+        sourceHandle: sourceHandle || undefined,
+        targetHandle: targetHandle || undefined,
         type: 'removable',
         animated: true,
         style: { stroke: brandColor, strokeWidth: 2.5 },
@@ -328,10 +473,10 @@ const CanvasInner: React.FC<{
 
       try {
         await api.createEdge(activeEvent.id, {
-          sourceId: connection.source,
-          targetId: connection.target,
-          sourceHandle: connection.sourceHandle,
-          targetHandle: connection.targetHandle,
+          sourceId,
+          targetId,
+          sourceHandle: sourceHandle || undefined,
+          targetHandle: targetHandle || undefined,
           type: 'smoothstep',
           animated: true,
         });
@@ -391,7 +536,11 @@ const CanvasInner: React.FC<{
         note: 'General Memo / Sticky',
         picture: 'Event Photo / Site Snap',
         audio: 'Audio Note / Voice Memo',
+        venue: 'Venue & Logistics',
+        video: 'Video Player',
       };
+
+      if (isReadOnly) return;
 
       try {
         const created = await api.createNode(activeEvent.id, {
@@ -404,13 +553,9 @@ const CanvasInner: React.FC<{
           xPosition: position.x,
           yPosition: position.y,
           isCompleted: false,
-          dueDate:
-            type === 'task' || type === 'chaser'
-              ? new Date(Date.now() + 2 * 86400000).toISOString()
-              : null,
+          dueDate: null,
           metadata: JSON.stringify({
-            subtasks:
-              type === 'task' ? [{ id: 'st1', label: 'Initial action item', done: false }] : [],
+            subtasks: [],
           }),
         });
 
@@ -420,8 +565,10 @@ const CanvasInner: React.FC<{
           position: { x: created.xPosition, y: created.yPosition },
           data: {
             node: created,
+            isReadOnly,
             onUpdate: handleUpdateNode,
             onDelete: handleDeleteNode,
+            onDuplicate: handleDuplicateNode,
           },
         };
 
@@ -430,10 +577,10 @@ const CanvasInner: React.FC<{
         console.error('Failed to spawn building block:', err);
       }
     },
-    [activeEvent.id, handleUpdateNode, handleDeleteNode, setNodes]
+    [activeEvent.id, handleUpdateNode, handleDeleteNode, handleDuplicateNode, setNodes]
   );
 
-  // Context menu on right-click
+  // Context menu on pane right-click
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
       event.preventDefault();
@@ -446,6 +593,27 @@ const CanvasInner: React.FC<{
         x: event.clientX,
         y: event.clientY,
         flowPos,
+        targetNodeId: null,
+      });
+    },
+    [screenToFlowPosition]
+  );
+
+  // Context menu on node right-click
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const flowPos = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        flowPos,
+        targetNodeId: node.id,
       });
     },
     [screenToFlowPosition]
@@ -559,27 +727,41 @@ const CanvasInner: React.FC<{
       onDrop={onDrop}
     >
       {/* BUILDING BLOCKS PALETTE */}
-      <BuildingBlocksPalette onSpawnNode={(type) => spawnBuildingBlock(type)} />
+      {!isReadOnly && (
+        <BuildingBlocksPalette
+          onSpawnNode={(type) => spawnBuildingBlock(type)}
+          hasExistingBlocks={nodes.length > 0}
+        />
+      )}
 
       {/* Main XYFlow Canvas */}
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onEdgesDelete={handleEdgesDelete}
-        onNodeDragStop={onNodeDragStop}
+        onNodesChange={isReadOnly ? undefined : onNodesChange}
+        onEdgesChange={isReadOnly ? undefined : onEdgesChange}
+        onConnectStart={isReadOnly ? undefined : onConnectStart}
+        onConnectEnd={isReadOnly ? undefined : onConnectEnd}
+        onConnect={isReadOnly ? undefined : onConnect}
+        connectionMode={ConnectionMode.Loose}
+        connectionRadius={30}
+        nodesDraggable={!isReadOnly}
+        nodesConnectable={!isReadOnly}
+        elementsSelectable={true}
+        isValidConnection={(connection) => Boolean(!isReadOnly && connection.source && connection.target && connection.source !== connection.target)}
+        onEdgesDelete={isReadOnly ? undefined : handleEdgesDelete}
+        onNodeDragStop={isReadOnly ? undefined : onNodeDragStop}
         onMoveEnd={onMoveEnd}
-        onPaneContextMenu={onPaneContextMenu}
+        onPaneContextMenu={isReadOnly ? undefined : onPaneContextMenu}
+        onNodeContextMenu={isReadOnly ? undefined : onNodeContextMenu}
         onPaneClick={() => setContextMenu(null)}
         onNodeClick={() => setContextMenu(null)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
-        deleteKeyCode={['Backspace', 'Delete']}
-        edgesFocusable={true}
-        edgesReconnectable={true}
+        deleteKeyCode={isReadOnly ? [] : ['Backspace', 'Delete']}
+        edgesFocusable={!isReadOnly}
+        edgesReconnectable={!isReadOnly}
         snapToGrid={snapToGrid}
         snapGrid={[20, 20]}
         fitViewOptions={{ padding: 0.3 }}
@@ -616,10 +798,12 @@ const CanvasInner: React.FC<{
       </ReactFlow>
 
       {/* CONTEXT MENU */}
-      {contextMenu && (
+      {!isReadOnly && contextMenu && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          targetNodeId={contextMenu.targetNodeId}
+          onDuplicate={(id) => handleDuplicateNode(id)}
           onClose={() => setContextMenu(null)}
           onSelect={(type) => spawnBuildingBlock(type, contextMenu.flowPos)}
         />
@@ -920,7 +1104,10 @@ const CanvasInner: React.FC<{
 export const CanvasZone: React.FC<CanvasZoneProps> = ({
   activeEvent,
   onRefreshEvent,
+  onUpdateNodeLocal,
+  onOpenEditEvent,
   locatedNodeId,
+  isReadOnly,
 }) => {
   const { theme } = useTheme();
 
@@ -950,7 +1137,10 @@ export const CanvasZone: React.FC<CanvasZoneProps> = ({
       <CanvasInner
         activeEvent={activeEvent}
         onRefreshEvent={onRefreshEvent}
+        onUpdateNodeLocal={onUpdateNodeLocal}
+        onOpenEditEvent={onOpenEditEvent}
         locatedNodeId={locatedNodeId}
+        isReadOnly={isReadOnly}
       />
     </ReactFlowProvider>
   );

@@ -1,12 +1,13 @@
 export type Priority = 'high' | 'med' | 'low';
 
-export type NodeType = 'task' | 'info' | 'chaser' | 'note' | 'picture' | 'audio';
+export type NodeType = 'task' | 'info' | 'chaser' | 'note' | 'picture' | 'audio' | 'venue' | 'video';
 
 export type Severity = 'low' | 'medium' | 'critical' | 'none';
 
 export interface Contact {
   id: string;
   name: string;
+  department?: string | null;
   email: string | null;
   phone: string | null;
   role: string | null;
@@ -14,14 +15,37 @@ export interface Contact {
   updatedAt?: string;
 }
 
+export interface Venue {
+  id: string;
+  workspaceId?: string | null;
+  name: string;
+  location?: string | null;
+  setupTime?: string | null;
+  teardownTime?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface EventItem {
   id: string;
+  workspaceId?: string | null;
+  isOwner?: boolean;
+  isShared?: boolean;
+  userRole?: 'editor' | 'viewer';
+  shareRole?: 'editor' | 'viewer';
   title: string;
   department: string | null;
   term: string | null;
   year: string | null;
   startDate: string | null;
   endDate: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  color?: string | null;
+  status?: string | null;
   priority: Priority | null;
   isMuted: boolean;
   isCompleted?: boolean;
@@ -97,12 +121,27 @@ export interface FrictionLogItem {
   createdAt: string;
 }
 
+export interface EventShare {
+  id: string;
+  eventId: string;
+  userId: string;
+  role: 'editor' | 'viewer';
+  createdAt: string;
+  user?: {
+    id: string;
+    username: string;
+    name?: string | null;
+    role: string;
+  };
+}
+
 export interface FullEventDetails extends EventItem {
   nodes: CanvasNodeItem[];
   edges: CanvasEdgeItem[];
   checklists: ChecklistItemData[];
   frictionLogs: FrictionLogItem[];
   contacts: Contact[];
+  shares?: EventShare[];
 }
 
 export interface MasterTasksResponse {
@@ -113,6 +152,8 @@ export interface MasterTasksResponse {
       priority: Priority | null;
       department: string | null;
       term: string | null;
+      status?: string | null;
+      color?: string | null;
     };
   })[];
   checklistItems: (ChecklistItemData & {
@@ -122,9 +163,12 @@ export interface MasterTasksResponse {
       priority: Priority | null;
       department: string | null;
       term: string | null;
+      status?: string | null;
+      color?: string | null;
     };
   })[];
   totalPending: number;
+  totalAgendaDated?: number;
 }
 
 export type ScheduleAgendaResponse = MasterTasksResponse;

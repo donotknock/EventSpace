@@ -7,15 +7,112 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// -------------------------------------------------------------
+// Authentication & Multi-Tenancy Models
+// -------------------------------------------------------------
+
+model User {
+  id           String            @id @default(uuid())
+  username     String            @unique
+  passwordHash String
+  name         String?
+  role         String            @default("admin") // "admin" | "member"
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  workspaces   WorkspaceMember[]
+  pairingCodes PairingCode[]
+  sharedEvents EventShare[]
+}
+
+model Workspace {
+  id         String            @id @default(uuid())
+  name       String
+  isArchived Boolean           @default(false)
+  deletedAt  DateTime?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  members    WorkspaceMember[]
+  events     Event[]
+  nodes      CanvasNode[]
+  checklists ChecklistItem[]
+  contacts   Contact[]
+  venues     Venue[]
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        String    @default("owner") // "owner" | "admin" | "member"
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId])
+}
+
+// -------------------------------------------------------------
+// Mobile Pairing Model (Replaces static COMPANION_PIN)
+// -------------------------------------------------------------
+
+model PairingCode {
+  id          String   @id @default(uuid())
+  code        String   @unique // 6-digit numeric string
+  userId      String
+  workspaceId String?
+  deviceName  String?  // e.g. "iPhone 15 Pro", "Work iPad"
+  deviceId    String?  // unique client device ID
+  expiresAt   DateTime // now + 5 minutes
+  used        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([code])
+}
+
+// -------------------------------------------------------------
+// Event Sharing & Collaboration Model
+// -------------------------------------------------------------
+
+model EventShare {
+  id        String   @id @default(uuid())
+  eventId   String
+  userId    String
+  role      String   @default("editor") // "editor" | "viewer"
+  createdAt DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+}
+
+// -------------------------------------------------------------
+// Core Domain Models (Scoped to Workspace)
+// -------------------------------------------------------------
+
 model Event {
   id           String          @id @default(uuid())
+  workspaceId  String?
   title        String
   department   String?
   term         String?
   year         String?
   startDate    DateTime?
   endDate      DateTime?
+  startTime    String?
+  endTime      String?
+  status       String?         @default("active") // "active" | "archived"
   priority     String?         @default("med") // "high", "med", "low", or null
+  color        String?         // Custom event color (e.g. hex code "#3B82F6")
   isMuted      Boolean         @default(false)
   isCompleted  Boolean         @default(false)
   isTemplate   Boolean         @default(false)
@@ -29,45 +126,77 @@ model Event {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
+  workspace    Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  shares       EventShare[]
   nodes        CanvasNode[]
   edges        CanvasEdge[]
   checklists   ChecklistItem[]
   frictionLogs FrictionLog[]
   contacts     Contact[]
+
+  @@index([workspaceId])
+  @@index([status])
 }
 
 model Contact {
-  id        String   @id @default(uuid())
-  name      String
-  email     String?
-  phone     String?
-  role      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String     @id @default(uuid())
+  workspaceId String?
+  name        String
+  department  String?
+  email       String?
+  phone       String?
+  role        String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
-  events    Event[]
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  events      Event[]
+
+  @@index([workspaceId])
+}
+
+model Venue {
+  id           String      @id @default(uuid())
+  workspaceId  String?
+  name         String
+  location     String?
+  setupTime    String?
+  teardownTime String?
+  contactName  String?
+  contactPhone String?
+  notes        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
+
+  workspace    Workspace?  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
 
 model CanvasNode {
-  id          String    @id @default(uuid())
+  id          String     @id @default(uuid())
+  workspaceId String?
   eventId     String
-  type        String    @default("task") // "task", "info", "chaser", "note", "picture"
+  type        String     @default("task") // "task", "info", "chaser", "note", "picture", "audio", "venue", "video"
   xPosition   Float
   yPosition   Float
   title       String
   content     String?
-  isCompleted Boolean   @default(false)
+  isCompleted Boolean    @default(false)
   dueDate     DateTime?
   assignee    String?
-  priority    String?   // "high", "med", "low"
-  metadata    String?   // JSON string storing bullet lists, tags, or extra fields
+  priority    String?    // "high", "med", "low"
+  metadata    String?    // JSON string storing bullet lists, tags, or extra fields
   deletedAt   DateTime?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
-  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  event       Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
+  @@index([workspaceId])
   @@index([eventId])
 }
 
@@ -88,17 +217,21 @@ model CanvasEdge {
 }
 
 model ChecklistItem {
-  id          String   @id @default(uuid())
+  id          String     @id @default(uuid())
+  workspaceId String?
   eventId     String
-  category    String   // "FM", "AV", "Sodexo" (or custom)
+  category    String     // "FM", "AV", "CT", "COMMUNICATIONS", etc.
   content     String
-  isCompleted Boolean  @default(false)
-  order       Int      @default(0)
+  isCompleted Boolean    @default(false)
+  order       Int        @default(0)
   deletedAt   DateTime?
 
-  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  event       Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
+  @@index([workspaceId])
   @@index([eventId])
+  @@index([order])
 }
 
 model FrictionLog {

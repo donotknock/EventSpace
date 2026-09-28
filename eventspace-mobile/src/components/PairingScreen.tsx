@@ -29,7 +29,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({ onPaired }) => {
     return 'http://localhost:3000';
   };
   const [serverUrl, setServerUrl] = useState(getInitialServerUrl);
-  const [pin, setPin] = useState('EVSP-9482');
+  const [pin, setPin] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -37,14 +37,14 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({ onPaired }) => {
 
   const handlePair = async (urlToTest = serverUrl, pinToTest = pin) => {
     const cleanUrl = mobileApi.cleanUrl(urlToTest);
-    const cleanPin = pinToTest.trim().toUpperCase();
+    const cleanPin = pinToTest.trim();
 
     if (!cleanUrl) {
       setErrorMessage('Please enter the server address (e.g. http://192.168.1.150:3001)');
       return;
     }
     if (!cleanPin) {
-      setErrorMessage('Please enter the 4-8 digit pairing PIN (e.g. EVSP-9482)');
+      setErrorMessage('Please enter the 6-digit pairing code (e.g. 123456)');
       return;
     }
 
@@ -54,7 +54,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({ onPaired }) => {
     try {
       const result = await mobileApi.verifyPairing(cleanUrl, cleanPin);
       if (!result.success) {
-        setErrorMessage(result.error || 'Pairing failed. Please check IP and PIN.');
+        setErrorMessage(result.error || 'Pairing failed. Please check IP and Pairing Code.');
         setIsConnecting(false);
         return;
       }
@@ -62,6 +62,11 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({ onPaired }) => {
       const config: ServerConfig = {
         serverUrl: cleanUrl,
         pin: cleanPin,
+        pairingCode: cleanPin,
+        token: result.token,
+        workspaceId: result.workspaceId,
+        username: result.username,
+        deviceName: result.deviceName,
         pairedAt: new Date().toISOString(),
         serverName: 'EventSpace Server',
       };
@@ -176,23 +181,24 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({ onPaired }) => {
           </div>
         </div>
 
-        {/* Pairing PIN Input */}
+        {/* Pairing Code Input */}
         <div className="space-y-1.5">
           <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-            Pairing PIN
+            6-Digit Pairing Code
           </label>
           <div className="relative flex items-center">
             <KeyRound className="w-4 h-4 text-slate-500 absolute left-3.5 pointer-events-none" />
             <input
               type="text"
               value={pin}
-              onChange={(e) => setPin(e.target.value.toUpperCase())}
-              placeholder="EVSP-9482"
+              onChange={(e) => setPin(e.target.value.trim())}
+              placeholder="123456"
+              maxLength={6}
               className="w-full bg-slate-800/80 border border-slate-700/80 rounded-2xl pl-10 pr-3.5 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono tracking-widest font-bold"
             />
           </div>
           <p className="text-[10px] text-slate-500">
-            Find the PIN in Web App → Settings → Mobile Companion App tab.
+            Generate your 5-minute code in Web App → Settings → Mobile Companion App tab.
           </p>
         </div>
 

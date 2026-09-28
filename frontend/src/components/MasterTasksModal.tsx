@@ -36,6 +36,7 @@ interface AgendaItem {
     title: string;
     department: string | null;
     priority: string | null;
+    color?: string | null;
   };
   node: MasterTasksResponse['taskNodes'][0];
 }
@@ -139,6 +140,9 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
     if (!data?.taskNodes) return list;
 
     for (const task of data.taskNodes) {
+      // Exclude archived events
+      if (task.event?.status === 'archived') continue;
+
       // 1. Main task/chaser node (if it has a dueDate attached)
       if (task.dueDate) {
         if (includeCompleted || !task.isCompleted) {
@@ -161,7 +165,7 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
           const meta = JSON.parse(task.metadata);
           if (Array.isArray(meta.subtasks)) {
             for (const st of meta.subtasks) {
-              if (st.dueDate) {
+              if (st.dueDate && st.style !== 'bullet') {
                 if (includeCompleted || !st.done) {
                   list.push({
                     id: `${task.id}_st_${st.id}`,
@@ -417,29 +421,47 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
                           </button>
 
                           <div className="min-w-0 flex-1 space-y-1">
-                            {/* Parent Event Title (Strict requirement) */}
+                            {/* Parent Event Title with Custom Event Color */}
                             <div className="flex items-center gap-2">
-                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-md border border-blue-200/60 dark:border-blue-900/60">
+                              <span
+                                className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                                style={{
+                                  backgroundColor: item.event.color ? `${item.event.color}18` : undefined,
+                                  borderColor: item.event.color ? `${item.event.color}40` : undefined,
+                                  color: item.event.color || undefined,
+                                }}
+                              >
                                 <Layers className="w-3 h-3" />
                                 <span>{item.event.title}</span>
                               </span>
 
-                              {/* Item Type Badge */}
-                              <span
-                                className={`text-[10px] uppercase font-extrabold px-1.5 py-0.5 rounded ${
-                                  item.type === 'subtask'
-                                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
-                                    : item.type === 'chaser'
-                                    ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300'
-                                    : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                                }`}
-                              >
-                                {item.type === 'subtask'
-                                  ? 'Sub-Task'
-                                  : item.type === 'chaser'
-                                  ? 'Chaser'
-                                  : 'Task'}
-                              </span>
+                              {/* Block Tag reflecting assigned Block Color */}
+                              {(() => {
+                                const blockType = (item.node?.type || item.type || 'task').toLowerCase();
+                                const colorMap: Record<string, string> = {
+                                  task: '#3B82F6',
+                                  chaser: '#F59E0B',
+                                  info: '#10B981',
+                                  venue: '#6366F1',
+                                  picture: '#F43F5E',
+                                  audio: '#A855F7',
+                                  video: '#F97316',
+                                };
+                                const blockColor = colorMap[blockType] || '#3B82F6';
+                                const blockLabel = item.type === 'subtask' ? 'Sub-Task' : item.node?.type ? item.node.type.toUpperCase() : 'TASK';
+                                return (
+                                  <span
+                                    className="text-[10px] uppercase font-extrabold px-1.5 py-0.5 rounded border"
+                                    style={{
+                                      backgroundColor: `${blockColor}18`,
+                                      borderColor: `${blockColor}40`,
+                                      color: blockColor,
+                                    }}
+                                  >
+                                    {blockLabel}
+                                  </span>
+                                );
+                              })()}
                             </div>
 
                             {/* Item Title & Parent info */}

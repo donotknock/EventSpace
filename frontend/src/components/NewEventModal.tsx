@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Priority, EventItem, Contact } from '../types';
 import { X, Sparkles, Building2, Calendar, Copy, UserCheck, Plus, Check, LayoutTemplate } from 'lucide-react';
 import { api } from '../services/api';
@@ -15,6 +15,7 @@ interface NewEventModalProps {
     endDate?: string | null;
     priority?: Priority | null;
     contactIds?: string[];
+    includeDefaultChecklists?: boolean;
   }) => Promise<void>;
   onDuplicate: (
     sourceId: string,
@@ -41,10 +42,20 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState('');
   const [hasEndDate, setHasEndDate] = useState(false);
-  const [priority, setPriority] = useState<Priority | null>('med');
+  const [priority, setPriority] = useState<Priority | null>(null);
   const [copyFromId, setCopyFromId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [templates, setTemplates] = useState<EventItem[]>([]);
+
+  // Strictly filter out archived items and completed events from template and clone selectors
+  const availableTemplates = useMemo(
+    () => templates.filter((t) => t.status !== 'archived'),
+    [templates]
+  );
+  const availableEvents = useMemo(
+    () => events.filter((e) => e.status !== 'archived' && !e.isCompleted && !e.isTemplate),
+    [events]
+  );
 
   // Contacts (Person in Charge)
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
@@ -53,39 +64,66 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
   const [newContactName, setNewContactName] = useState('');
   const [newContactRole, setNewContactRole] = useState('');
 
+  const resetForm = () => {
+    setTitle('');
+    setDepartment('');
+    setStartDate(new Date().toISOString().slice(0, 10));
+    setEndDate('');
+    setHasEndDate(false);
+    setPriority(null);
+    setCopyFromId('');
+    setSelectedContactIds([]);
+    setIsAddingContact(false);
+    setNewContactName('');
+    setNewContactRole('');
+    setIsSubmitting(false);
+  };
+
   useEffect(() => {
     if (isOpen) {
+      resetForm();
       api.getContacts().then(setAvailableContacts).catch(console.error);
       api.getTemplates().then(setTemplates).catch(console.error);
     }
   }, [isOpen]);
 
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   const handleCopySourceChange = (sourceId: string) => {
     setCopyFromId(sourceId);
-    if (sourceId) {
-      const src = templates.find((t) => t.id === sourceId) || events.find((e) => e.id === sourceId);
-      if (src) {
-        if (!title || title.endsWith('(Copy)') || title.endsWith('(Template)')) {
-          const cleanName = src.title.replace(' (Template)', '').replace(' (Copy)', '');
-          setTitle(`${cleanName}`);
-        }
-        if (src.department && !department) {
-          setDepartment(src.department);
-        }
-        if (src.startDate) {
-          setStartDate(new Date(src.startDate).toISOString().slice(0, 10));
-        }
-        if (src.endDate && src.endDate !== src.startDate) {
-          setEndDate(new Date(src.endDate).toISOString().slice(0, 10));
-          setHasEndDate(true);
-        } else {
-          setEndDate('');
-          setHasEndDate(false);
-        }
-        setPriority(src.priority ?? null);
+    if (!sourceId) {
+      // Switched back to Blank New Event - completely reset fields
+      setTitle('');
+      setDepartment('');
+      setStartDate(new Date().toISOString().slice(0, 10));
+      setEndDate('');
+      setHasEndDate(false);
+      setPriority(null);
+      return;
+    }
+    const src = templates.find((t) => t.id === sourceId) || events.find((e) => e.id === sourceId);
+    if (src) {
+      const cleanName = src.title.replace(' (Template)', '').replace(' (Copy)', '');
+      setTitle(`${cleanName}`);
+      setDepartment(src.department || '');
+      if (src.startDate) {
+        setStartDate(new Date(src.startDate).toISOString().slice(0, 10));
+      } else {
+        setStartDate(new Date().toISOString().slice(0, 10));
       }
+      if (src.endDate && src.endDate !== src.startDate) {
+        setEndDate(new Date(src.endDate).toISOString().slice(0, 10));
+        setHasEndDate(true);
+      } else {
+        setEndDate('');
+        setHasEndDate(false);
+      }
+      setPriority(src.priority ?? 'med');
     }
   };
 
@@ -137,6 +175,7 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
           endDate: finalEndDate,
           priority,
           contactIds: selectedContactIds,
+          includeDefaultChecklists: false,
         });
       }
 
@@ -172,7 +211,7 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <X className="w-5 h-5" />
@@ -193,18 +232,18 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
               className="w-full h-11 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">-- Blank New Event --</option>
-              {templates.length > 0 && (
+              {availableTemplates.length > 0 && (
                 <optgroup label="Saved Templates">
-                  {templates.map((tpl) => (
+                  {availableTemplates.map((tpl) => (
                     <option key={tpl.id} value={tpl.id}>
                       📋 {tpl.title} {tpl.department ? `(${tpl.department})` : ''}
                     </option>
                   ))}
                 </optgroup>
               )}
-              {events.length > 0 && (
+              {availableEvents.length > 0 && (
                 <optgroup label="Existing Events">
-                  {events.map((ev) => (
+                  {availableEvents.map((ev) => (
                     <option key={ev.id} value={ev.id}>
                       🗓 {ev.title} {ev.department ? `(${ev.department})` : ''}
                     </option>

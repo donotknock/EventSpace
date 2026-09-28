@@ -16,6 +16,8 @@ import {
   FileAudio,
   Volume2,
   Loader2,
+  CheckCircle2,
+  Circle,
 } from 'lucide-react';
 import { CanvasNodeItem } from '../../types';
 import {
@@ -24,6 +26,7 @@ import {
   FALLBACK_SUMMARY_TEXT,
   formatSummaryAsBullets,
 } from '../../utils/transcription';
+import { AutoLinkText } from '../../utils/linkify';
 
 export const AudioNode: React.FC<NodeProps> = (props) => {
   const nodeData = props.data as unknown as {
@@ -96,10 +99,11 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
   useEffect(() => {
     setTitleText(node.title || 'Audio Note');
     setTranscriptText(node.content || '');
+    setDateValue(node.dueDate ? new Date(node.dueDate).toISOString().slice(0, 10) : '');
     if (metadataObj.summary !== undefined) {
       setSummaryInput(metadataObj.summary);
     }
-  }, [node.title, node.content, metadataObj.summary]);
+  }, [node.title, node.content, node.dueDate, metadataObj.summary]);
 
   const handleSaveTitle = () => {
     if (titleText.trim() && titleText !== node.title) {
@@ -314,7 +318,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
       style={{ '--locate-color': '#8b5cf6' } as React.CSSProperties}
       className={`group relative w-full h-full min-w-[280px] min-h-[260px] rounded-2xl bg-white dark:bg-slate-900 border-2 border-violet-500/60 dark:border-violet-500/50 hover:border-violet-500 shadow-lg shadow-violet-500/10 transition-all select-none box-border flex flex-col justify-between ${
         nodeData.isLocated ? 'animate-locate-highlight ring-4 ring-offset-2 ring-violet-500' : ''
-      }`}
+      } ${node.isCompleted ? 'opacity-50' : ''}`}
     >
       <NodeResizer
         isVisible={Boolean(props.selected)}
@@ -323,6 +327,19 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
         color="#8b5cf6"
         lineClassName="!border-violet-500"
         handleClassName="!w-3 !h-3 !bg-white !border-2 !border-violet-500 !rounded shadow-md"
+        onResizeEnd={(_, params) => {
+          let meta: any = {};
+          try {
+            meta = JSON.parse(node.metadata || '{}');
+          } catch {}
+          onUpdate(props.id, {
+            metadata: JSON.stringify({
+              ...meta,
+              width: Math.round(params.width),
+              height: Math.round(params.height),
+            }),
+          });
+        }}
       />
 
       {/* Exactly 1 Handle per side: Top (target), Left (target), Right (source), Bottom (source) */}
@@ -358,6 +375,21 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
       {/* Header */}
       <div className="p-3 border-b border-slate-100 dark:border-slate-800 rounded-t-2xl flex items-center justify-between gap-2 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUpdate(props.id, { isCompleted: !node.isCompleted });
+              }}
+              className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
+                node.isCompleted
+                  ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
+            >
+              {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+            </button>
             <div className="flex-shrink-0 text-violet-500">
               <Mic className="w-4 h-4" />
             </div>
@@ -488,9 +520,13 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
           ) : (
             <div className="flex items-start justify-between gap-1 group/title min-w-0">
               <h4
-                onClick={() => setIsEditingTitle(true)}
-                className="text-lg font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-violet-600 dark:hover:text-violet-400 transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0"
-                title="Click to edit title"
+                onDoubleClick={() => setIsEditingTitle(true)}
+                className={`text-lg font-semibold cursor-pointer transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+                  node.isCompleted
+                    ? 'line-through text-slate-400 dark:text-slate-500'
+                    : 'text-slate-900 dark:text-slate-100 hover:text-violet-600 dark:hover:text-violet-400'
+                }`}
+                title="Double-click to edit title"
               >
                 {node.title || 'Audio Note'}
               </h4>
@@ -691,7 +727,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                 }`}
                 title="Double-click to edit transcript"
               >
-                {node.content || 'Transcript placeholder: Click to add or auto-transcribe speech...'}
+                {node.content ? <AutoLinkText text={node.content} /> : 'Transcript placeholder: Click to add or auto-transcribe speech...'}
               </div>
             )}
           </div>
@@ -779,7 +815,9 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                         return (
                           <li key={idx} className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300 text-[11px] leading-relaxed">
                             <span className="w-1.5 h-1.5 rounded-full bg-violet-500 dark:bg-violet-400 mt-1.5 flex-shrink-0" />
-                            <span className="flex-1 break-all [overflow-wrap:anywhere] min-w-0">{cleanLine}</span>
+                            <span className="flex-1 break-all [overflow-wrap:anywhere] min-w-0">
+                              <AutoLinkText text={cleanLine} />
+                            </span>
                           </li>
                         );
                       })}

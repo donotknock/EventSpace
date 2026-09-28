@@ -1,11 +1,16 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { requireAuth, requireWorkspace } from '../middleware/auth.js';
 
 export const contactsRouter = Router();
 
+contactsRouter.use(requireAuth);
+contactsRouter.use(requireWorkspace);
+
 const contactSchema = z.object({
   name: z.string().min(1, 'Name is required'),
+  department: z.string().optional().nullable(),
   email: z.string().email().optional().nullable().or(z.literal('')),
   phone: z.string().optional().nullable(),
   role: z.string().optional().nullable(),
@@ -15,6 +20,14 @@ const contactSchema = z.object({
 contactsRouter.get('/', async (req: Request, res: Response) => {
   try {
     const contacts = await prisma.contact.findMany({
+      where: req.workspaceId
+        ? {
+            OR: [
+              { workspaceId: req.workspaceId },
+              { workspaceId: null },
+            ],
+          }
+        : undefined,
       orderBy: { name: 'asc' },
     });
     res.json(contacts);
@@ -30,7 +43,9 @@ contactsRouter.post('/', async (req: Request, res: Response) => {
     const validated = contactSchema.parse(req.body);
     const contact = await prisma.contact.create({
       data: {
+        workspaceId: req.workspaceId || null,
         name: validated.name.trim(),
+        department: validated.department?.trim() || null,
         email: validated.email || null,
         phone: validated.phone?.trim() || null,
         role: validated.role?.trim() || null,
@@ -56,6 +71,7 @@ contactsRouter.put('/:id', async (req: Request, res: Response) => {
       where: { id },
       data: {
         name: validated.name?.trim(),
+        department: validated.department !== undefined ? (validated.department?.trim() || null) : undefined,
         email: validated.email !== undefined ? (validated.email || null) : undefined,
         phone: validated.phone !== undefined ? (validated.phone?.trim() || null) : undefined,
         role: validated.role !== undefined ? (validated.role?.trim() || null) : undefined,

@@ -13,9 +13,30 @@ import {
   Check,
   Plus,
   FileText,
+  GripVertical,
+  Copy,
+  Table,
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { CanvasNodeItem } from '../../types';
 import { useSettings } from '../../context/SettingsContext';
+import { AutoLinkText } from '../../utils/linkify';
+import { ContentWithTables, parseSpreadsheetToMarkdown } from '../../utils/markdownTable';
 
 interface BaseNodeProps {
   id: string;
@@ -23,7 +44,9 @@ interface BaseNodeProps {
     node: CanvasNodeItem;
     onUpdate: (id: string, updates: Partial<CanvasNodeItem>) => void;
     onDelete: (id: string) => void;
+    onDuplicate?: (id: string) => void;
     isLocated?: boolean;
+    isReadOnly?: boolean;
   };
   accentColor: string;
   badgeBg: string;
@@ -32,6 +55,43 @@ interface BaseNodeProps {
   typeName: string;
   selected?: boolean;
 }
+
+const SortableSubtaskRow: React.FC<{
+  st: { id: string };
+  isReadOnly?: boolean;
+  children: React.ReactNode;
+}> = ({ st, isReadOnly, children }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: st.id,
+    disabled: Boolean(isReadOnly),
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      className="group/st flex items-center justify-between gap-1 py-0.5 px-1 rounded-lg hover:bg-slate-100/70 dark:hover:bg-slate-800/70 transition-colors"
+    >
+      {!isReadOnly && (
+        <div
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing p-0.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 opacity-0 group-hover/st:opacity-100 transition-opacity flex-shrink-0 nodrag nopan"
+          title="Drag to reorder subtask"
+        >
+          <GripVertical className="w-3.5 h-3.5" />
+        </div>
+      )}
+      {children}
+    </div>
+  );
+};
 
 export const BaseNode: React.FC<BaseNodeProps> = ({
   id,
@@ -43,7 +103,8 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
   typeName,
   selected,
 }) => {
-  const { node, onUpdate, onDelete } = data;
+  const { node, onUpdate, onDelete, onDuplicate } = data;
+  const isReadOnly = Boolean(data.isReadOnly);
   const {
     enablePriority,
     enableBulletSubtasks,
@@ -138,6 +199,30 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
     onUpdate(id, { metadata: newMetadata });
   };
 
+  // Subtask drag sensors & reorder handler
+  const subtaskSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor)
+  );
+
+  const handleSubtaskDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !metadataObj.subtasks) return;
+
+    const oldIndex = metadataObj.subtasks.findIndex((s) => s.id === active.id);
+    const newIndex = metadataObj.subtasks.findIndex((s) => s.id === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const reordered = arrayMove(metadataObj.subtasks, oldIndex, newIndex);
+      const newMetadata = JSON.stringify({ ...metadataObj, subtasks: reordered });
+      onUpdate(id, { metadata: newMetadata });
+    }
+  };
+
   const handleCycleSubtaskStyle = (subtaskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!metadataObj.subtasks) return;
@@ -162,14 +247,13 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
   const handleAddSubtask = () => {
     if (!newSubtaskText.trim()) return;
     const currentSubtasks = metadataObj.subtasks || [];
-    const isBullet = newSubtaskStyle === 'bullet';
     const updated = [
       ...currentSubtasks,
       {
         id: `st_${Date.now()}`,
         label: newSubtaskText.trim(),
         done: false,
-        dueDate: isBullet ? null : (newSubtaskDueDate ? new Date(newSubtaskDueDate).toISOString() : null),
+        dueDate: newSubtaskDueDate ? new Date(newSubtaskDueDate).toISOString() : null,
         style: newSubtaskStyle,
       },
     ];
@@ -200,7 +284,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
             ...st,
             label: editingSubtaskText.trim() || st.label,
             done: isBullet ? false : st.done,
-            dueDate: isBullet ? null : (editingSubtaskDueDate ? new Date(editingSubtaskDueDate).toISOString() : null),
+            dueDate: editingSubtaskDueDate ? new Date(editingSubtaskDueDate).toISOString() : null,
             style: editingSubtaskStyle,
           }
         : st
@@ -246,9 +330,11 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
     }
   }, [node.type]);
 
-  const handleBaseClasses = `!w-3.5 !h-3.5 ${handleColor} !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 ${
-    selected ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
-  }`;
+  const handleBaseClasses = isReadOnly
+    ? '!hidden'
+    : `!w-3.5 !h-3.5 ${handleColor} !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 ${
+        selected ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
+      }`;
 
   const resizerLineColor =
     node.type === 'chaser'
@@ -284,15 +370,24 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
       style={{ '--locate-color': locateBrandColor } as React.CSSProperties}
       className={`group relative w-full h-full min-w-[280px] rounded-2xl bg-white dark:bg-slate-900 border-2 shadow-lg transition-all select-none box-border flex flex-col justify-between ${accentColor} ${
         data.isLocated ? 'animate-locate-highlight ring-4 ring-offset-2 ring-blue-500' : ''
-      } ${node.isCompleted ? 'opacity-70 dark:opacity-60' : ''}`}
+      } ${node.isCompleted ? 'opacity-50' : ''}`}
     >
       <NodeResizer
-        isVisible={Boolean(selected)}
+        isVisible={Boolean(selected) && !isReadOnly}
         minWidth={280}
         minHeight={160}
         color={locateBrandColor}
         lineClassName={resizerLineColor}
         handleClassName={`${resizerHandleColor} shadow-md`}
+        onResizeEnd={(_, params) => {
+          onUpdate(id, {
+            metadata: JSON.stringify({
+              ...metadataObj,
+              width: Math.round(params.width),
+              height: Math.round(params.height),
+            }),
+          });
+        }}
       />
 
       {/* Exactly 1 Handle per side: Top (target), Left (target), Right (source), Bottom (source) */}
@@ -300,6 +395,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
         type="target"
         position={Position.Top}
         id="top-target"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
         style={{ left: '50%' }}
       />
@@ -307,6 +403,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
         type="target"
         position={Position.Left}
         id="left-target"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
         style={{ top: '50%' }}
       />
@@ -314,6 +411,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
         type="source"
         position={Position.Right}
         id="right-source"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
         style={{ top: '50%' }}
       />
@@ -321,6 +419,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
         type="source"
         position={Position.Bottom}
         id="bottom-source"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
         style={{ left: '50%' }}
       />
@@ -328,6 +427,24 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
       {/* Node Header */}
       <div className="p-3 border-b border-slate-100 dark:border-slate-800 rounded-t-2xl flex items-center justify-between gap-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            disabled={isReadOnly}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isReadOnly) onUpdate(id, { isCompleted: !node.isCompleted });
+            }}
+            className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
+              node.isCompleted
+                ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
+                : isReadOnly
+                ? 'text-slate-300 dark:text-slate-700 cursor-default'
+                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+            title={isReadOnly ? (node.isCompleted ? 'Completed' : 'Pending') : node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
+          >
+            {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+          </button>
           <div className="flex-shrink-0 text-slate-600 dark:text-slate-300">
             {icon}
           </div>
@@ -372,20 +489,22 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                   className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
                   title="Click to change date"
                 />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    handleDateChange('');
-                  }}
-                  className="relative z-20 ml-0.5 p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
-                  title="Clear date"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      handleDateChange('');
+                    }}
+                    className="relative z-20 ml-0.5 p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                    title="Clear date"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                )}
               </div>
-            ) : (
+            ) : !isReadOnly ? (
               <div
                 onClick={(e) => {
                   e.stopPropagation();
@@ -411,20 +530,36 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                   title="Click to set due date"
                 />
               </div>
-            )}
+            ) : null}
           </div>
 
+          {/* Duplicate button */}
+          {!isReadOnly && onDuplicate && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDuplicate(id);
+              }}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/50 transition-all"
+              title="Duplicate block"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {/* Delete button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(id);
-            }}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
-            title="Delete node"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          {!isReadOnly && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(id);
+              }}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
+              title="Delete node"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -462,32 +597,76 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
         ) : (
           <div className="flex items-start justify-between gap-1 group/title min-w-0">
             <h4
-              onClick={() => setIsEditingTitle(true)}
-              className="text-lg font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0"
-              title="Click or double-click to edit title"
+              onDoubleClick={() => {
+                if (!isReadOnly) setIsEditingTitle(true);
+              }}
+              className={`text-lg font-semibold ${
+                isReadOnly ? 'cursor-default' : 'cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'
+              } transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+                node.isCompleted
+                  ? 'line-through text-slate-400 dark:text-slate-500'
+                  : 'text-slate-900 dark:text-slate-100'
+              }`}
+              title={isReadOnly ? undefined : 'Double-click to edit title'}
             >
               {node.title}
             </h4>
-            <Edit3
-              onClick={() => setIsEditingTitle(true)}
-              className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
-            />
+            {!isReadOnly && (
+              <Edit3
+                onClick={() => setIsEditingTitle(true)}
+                className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
+              />
+            )}
           </div>
         )}
 
-        {/* Content text / notes (Double-click or click to edit) */}
+        {/* Content text / notes / tables (Double-click or click to edit) */}
         {isEditingContent ? (
           <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                {typeName} Notes / Tables
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const tableTemplate = `\n| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Item 1 | Detail A | Active |\n| Item 2 | Detail B | Pending |\n`;
+                  setContentText((prev) => (prev ? `${prev}\n${tableTemplate}` : tableTemplate));
+                }}
+                className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                title="Insert markdown table template"
+              >
+                <Table className="w-3 h-3" />
+                <span>+ Insert Table</span>
+              </button>
+            </div>
             <textarea
               autoFocus
-              rows={3}
+              rows={4}
               value={contentText}
               onChange={(e) => setContentText(e.target.value)}
+              onPaste={(e) => {
+                if (isReadOnly) return;
+                const text = e.clipboardData.getData('text/plain') || e.clipboardData.getData('text');
+                const html = e.clipboardData.getData('text/html');
+                const mdTable = parseSpreadsheetToMarkdown(text, html);
+                if (mdTable) {
+                  e.preventDefault();
+                  const target = e.target as HTMLTextAreaElement;
+                  const start = target.selectionStart ?? 0;
+                  const end = target.selectionEnd ?? 0;
+                  const val = contentText;
+                  const prefix = val.substring(0, start);
+                  const suffix = val.substring(end);
+                  const nextVal = prefix + (prefix.length > 0 && !prefix.endsWith('\n') ? '\n' : '') + mdTable + '\n' + suffix;
+                  setContentText(nextVal);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveContent();
                 if (e.key === 'Escape') setIsEditingContent(false);
               }}
-              placeholder="Enter node notes, details, briefing..."
+              placeholder="Enter node notes, details, briefing, or paste Excel/Sheets table..."
               className="w-full text-xs p-2 rounded-xl border border-blue-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none leading-relaxed font-sans"
             />
             <div className="flex justify-end gap-1.5">
@@ -507,23 +686,29 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
           </div>
         ) : node.content ? (
           <div
-            onDoubleClick={() => setIsEditingContent(true)}
-            className="group/content relative text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 bg-slate-50/70 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800/60 font-sans text-[11px] cursor-pointer hover:border-blue-300 dark:hover:border-blue-700/60 transition-colors"
-            title="Double-click to edit content"
+            onDoubleClick={() => {
+              if (!isReadOnly) setIsEditingContent(true);
+            }}
+            className={`group/content relative text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 bg-slate-50/70 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800/60 font-sans text-[11px] ${
+              isReadOnly ? 'cursor-default' : 'cursor-pointer hover:border-blue-300 dark:hover:border-blue-700/60'
+            } transition-colors`}
+            title={isReadOnly ? undefined : 'Double-click to edit content'}
           >
-            {node.content}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsEditingContent(true);
-              }}
-              className="absolute top-1.5 right-1.5 p-1 rounded-md bg-white dark:bg-slate-700 shadow-sm text-slate-400 hover:text-blue-500 opacity-0 group-hover/content:opacity-100 transition-opacity"
-              title="Edit content"
-            >
-              <Edit3 className="w-3 h-3" />
-            </button>
+            <ContentWithTables content={node.content} />
+            {!isReadOnly && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsEditingContent(true);
+                }}
+                className="absolute top-1.5 right-1.5 p-1 rounded-md bg-white dark:bg-slate-700 shadow-sm text-slate-400 hover:text-blue-500 opacity-0 group-hover/content:opacity-100 transition-opacity"
+                title="Edit content"
+              >
+                <Edit3 className="w-3 h-3" />
+              </button>
+            )}
           </div>
-        ) : (
+        ) : !isReadOnly ? (
           <button
             onClick={() => setIsEditingContent(true)}
             className="w-full text-left py-1 px-2 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all flex items-center gap-1.5"
@@ -531,7 +716,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
             <FileText className="w-3 h-3" />
             <span>+ Add details or notes...</span>
           </button>
-        )}
+        ) : null}
 
         {/* Embedded Subtasks (with inline editing, add, and delete) */}
         <div className="pt-1 space-y-1.5 border-t border-slate-100 dark:border-slate-800">
@@ -539,7 +724,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
             <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
               Sub-Tasks {metadataObj.subtasks ? `(${metadataObj.subtasks.length})` : ''}
             </span>
-            {!isAddingSubtask && (
+            {!isReadOnly && !isAddingSubtask && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -553,12 +738,18 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
             )}
           </div>
 
-          {metadataObj.subtasks &&
-            metadataObj.subtasks.map((st) => (
-              <div
-                key={st.id}
-                className="group/st flex items-center justify-between gap-1 py-0.5 px-1 rounded-lg hover:bg-slate-100/70 dark:hover:bg-slate-800/70 transition-colors"
-              >
+          <DndContext
+            sensors={subtaskSensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleSubtaskDragEnd}
+          >
+            <SortableContext
+              items={metadataObj.subtasks ? metadataObj.subtasks.map((s) => s.id) : []}
+              strategy={verticalListSortingStrategy}
+            >
+              {metadataObj.subtasks &&
+                metadataObj.subtasks.map((st) => (
+                  <SortableSubtaskRow key={st.id} st={st} isReadOnly={isReadOnly}>
                 {editingSubtaskId === st.id ? (
                   <div
                     className="flex flex-col gap-1.5 flex-1 p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-blue-400"
@@ -626,17 +817,15 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                       )}
 
                       <div className="flex items-center gap-1 ml-auto">
-                        {editingSubtaskStyle !== 'bullet' && (
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3 text-slate-400" />
-                            <input
-                              type="date"
-                              value={editingSubtaskDueDate}
-                              onChange={(e) => setEditingSubtaskDueDate(e.target.value)}
-                              className="text-[10px] px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-                            />
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-slate-400" />
+                          <input
+                            type="date"
+                            value={editingSubtaskDueDate}
+                            onChange={(e) => setEditingSubtaskDueDate(e.target.value)}
+                            className="text-[10px] px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
+                          />
+                        </div>
                         <button
                           onClick={() => handleSaveSubtaskLabel(st.id)}
                           className="w-6 h-6 flex items-center justify-center rounded bg-emerald-600 text-white"
@@ -674,21 +863,26 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                         <span
                           onDoubleClick={(e) => {
                             e.stopPropagation();
-                            handleStartEditSubtask(st);
+                            if (!isReadOnly) handleStartEditSubtask(st);
                           }}
-                          className="text-slate-700 dark:text-slate-300 font-normal break-all [overflow-wrap:anywhere] min-w-0 whitespace-pre-wrap flex-1"
-                          title="Double-click to edit note"
+                          className={`text-slate-700 dark:text-slate-300 font-normal break-all [overflow-wrap:anywhere] min-w-0 whitespace-pre-wrap flex-1 ${
+                            isReadOnly ? 'cursor-default' : ''
+                          }`}
+                          title={isReadOnly ? undefined : 'Double-click to edit note'}
                         >
-                          {st.label}
+                          <AutoLinkText text={st.label} />
                         </span>
                       </div>
                     ) : (
                       <button
+                        disabled={isReadOnly}
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleSubtask(st.id);
+                          if (!isReadOnly) toggleSubtask(st.id);
                         }}
-                        className="flex items-start gap-2 text-left min-w-0 flex-1 text-xs"
+                        className={`flex items-start gap-2 text-left min-w-0 flex-1 text-xs ${
+                          isReadOnly ? 'cursor-default' : ''
+                        }`}
                       >
                         {effectiveStyle === 'square' ? (
                           st.done ? (
@@ -704,84 +898,107 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                         <span
                           onDoubleClick={(e) => {
                             e.stopPropagation();
-                            handleStartEditSubtask(st);
+                            if (!isReadOnly) handleStartEditSubtask(st);
                           }}
                           className={`break-all [overflow-wrap:anywhere] min-w-0 whitespace-pre-wrap flex-1 ${
                             st.done
                               ? 'line-through text-slate-400 dark:text-slate-500'
                               : 'text-slate-700 dark:text-slate-300'
-                          }`}
-                          title="Double-click to edit"
+                          } ${isReadOnly ? 'cursor-default' : ''}`}
+                          title={isReadOnly ? undefined : 'Double-click to edit'}
                         >
-                          {st.label}
+                          <AutoLinkText text={st.label} />
                         </span>
                       </button>
                     );
                   })()}
 
-                    {/* HTML5 Date Picker for subtask - Right-aligned (Hidden for bullet point notes) */}
-                    {st.style !== 'bullet' && (
-                      <div
-                        className="flex items-center gap-1 flex-shrink-0 ml-auto nodrag nopan"
-                        onClick={(e) => e.stopPropagation()}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onPointerDown={(e) => e.stopPropagation()}
+                    {/* HTML5 Date Picker for subtask - Right-aligned */}
+                    <div
+                      className="flex items-center gap-1 flex-shrink-0 ml-auto nodrag nopan"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                    >
+                      <label
+                        className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-all border ${
+                          isReadOnly
+                            ? 'cursor-default'
+                            : 'cursor-pointer'
+                        } ${
+                          st.dueDate
+                            ? 'font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800'
+                            : 'text-slate-400 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-400 opacity-60 hover:opacity-100'
+                        }`}
+                        title={isReadOnly ? 'Due date' : 'Sub-task due date'}
                       >
-                        <label
-                          className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded cursor-pointer transition-all border ${
-                            st.dueDate
-                              ? 'font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800'
-                              : 'text-slate-400 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-400 opacity-60 hover:opacity-100'
+                        <Calendar className="w-2.5 h-2.5 flex-shrink-0" />
+                        <input
+                          type="date"
+                          disabled={isReadOnly}
+                          value={st.dueDate ? new Date(st.dueDate).toISOString().slice(0, 10) : ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            handleSubtaskDateChange(st.id, val ? new Date(val).toISOString() : null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          className={`bg-transparent text-[10px] p-0 border-0 outline-none w-auto font-inherit text-inherit nodrag nopan ${
+                            isReadOnly ? 'cursor-default pointer-events-none' : 'cursor-pointer'
                           }`}
-                          title="Sub-task due date"
+                          title={isReadOnly ? 'Due date' : 'Sub-task due date'}
+                        />
+                      </label>
+                      {!isReadOnly && st.dueDate && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            handleSubtaskDateChange(st.id, null);
+                          }}
+                          className="p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                          title="Clear subtask date"
                         >
-                          <Calendar className="w-2.5 h-2.5 flex-shrink-0" />
-                          <input
-                            type="date"
-                            value={st.dueDate ? new Date(st.dueDate).toISOString().slice(0, 10) : ''}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              handleSubtaskDateChange(st.id, val ? new Date(val).toISOString() : null);
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onPointerDown={(e) => e.stopPropagation()}
-                            className="bg-transparent text-[10px] p-0 border-0 outline-none cursor-pointer w-auto font-inherit text-inherit nodrag nopan"
-                            title="Sub-task due date"
-                          />
-                        </label>
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {!isReadOnly && (
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover/st:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartEditSubtask(st);
+                          }}
+                          className="p-1 text-slate-400 hover:text-blue-500"
+                          title="Edit subtask"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSubtask(st.id);
+                          }}
+                          className="p-1 text-slate-400 hover:text-red-500"
+                          title="Delete subtask"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
                     )}
-
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover/st:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleStartEditSubtask(st);
-                        }}
-                        className="p-1 text-slate-400 hover:text-blue-500"
-                        title="Edit subtask"
-                      >
-                        <Edit3 className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteSubtask(st.id);
-                        }}
-                        className="p-1 text-slate-400 hover:text-red-500"
-                        title="Delete subtask"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
                   </>
                 )}
-              </div>
+              </SortableSubtaskRow>
             ))}
+        </SortableContext>
+      </DndContext>
 
           {/* Inline Add Subtask input */}
-          {isAddingSubtask && (
+          {!isReadOnly && isAddingSubtask && (
             <div
               className="flex flex-col gap-1.5 p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-blue-400"
               onClick={(e) => e.stopPropagation()}
@@ -848,18 +1065,16 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                 )}
 
                 <div className="flex items-center gap-1 ml-auto">
-                  {newSubtaskStyle !== 'bullet' && (
-                    <div className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3 text-slate-400" />
-                      <input
-                        type="date"
-                        value={newSubtaskDueDate}
-                        onChange={(e) => setNewSubtaskDueDate(e.target.value)}
-                        title="Optional sub-task due date"
-                        className="text-[10px] px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-                      />
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-slate-400" />
+                    <input
+                      type="date"
+                      value={newSubtaskDueDate}
+                      onChange={(e) => setNewSubtaskDueDate(e.target.value)}
+                      title="Optional sub-task due date"
+                      className="text-[10px] px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
+                    />
+                  </div>
                   <button
                     onClick={handleAddSubtask}
                     className="h-6 px-2.5 flex items-center justify-center rounded bg-blue-600 text-white text-[10px] font-bold shadow-sm"

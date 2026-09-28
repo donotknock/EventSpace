@@ -1,6 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import { SettingsProvider } from './context/SettingsContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { LoginScreen } from './components/LoginScreen';
+import { Loader2 } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { TopChecklistBar } from './components/TopChecklistBar';
@@ -10,13 +13,19 @@ import { EditEventModal } from './components/EditEventModal';
 import { MasterTasksModal } from './components/MasterTasksModal';
 import { SettingsModal } from './components/SettingsModal';
 import { TrashBinModal } from './components/TrashBinModal';
+import { ContactsModal } from './components/ContactsModal';
+import { TemplatesModal } from './components/TemplatesModal';
+import { VenuesModal } from './components/VenuesModal';
 import { api } from './services/api';
-import { EventItem, FullEventDetails, Priority } from './types';
+import { EventItem, FullEventDetails, Priority, CanvasNodeItem } from './types';
 
 function EventSpaceApp() {
+  const { logout } = useAuth();
   const [events, setEvents] = useState<EventItem[]>([]);
   const [activeEventId, setActiveEventId] = useState<string | null>(null);
   const [activeEvent, setActiveEvent] = useState<FullEventDetails | null>(null);
+  const activeEventIdRef = useRef<string | null>(activeEventId);
+  activeEventIdRef.current = activeEventId;
 
   // Layout & Modals
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -37,6 +46,9 @@ function EventSpaceApp() {
   const [locatedChecklistCategory, setLocatedChecklistCategory] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+  const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
+  const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false);
+  const [isVenuesModalOpen, setIsVenuesModalOpen] = useState(false);
 
   // Fetch events list
   const loadEvents = useCallback(async () => {
@@ -51,14 +63,19 @@ function EventSpaceApp() {
       setEvents(data);
 
       if (data.length > 0) {
-        const hashMatch = window.location.hash.match(/event=([^&]+)/);
         const searchParams = new URLSearchParams(window.location.search);
-        const targetEventId = hashMatch ? hashMatch[1] : searchParams.get('event');
+        const hashMatch = window.location.hash.match(/event=([^&]+)/);
+        const storedId = localStorage.getItem('eventspace_active_event_id');
+        const targetEventId =
+          searchParams.get('event') || (hashMatch ? hashMatch[1] : null) || storedId;
 
+        const currentActive = activeEventIdRef.current;
         if (targetEventId && data.some((e) => e.id === targetEventId)) {
-          setActiveEventId(targetEventId);
-        } else if (!activeEventId || !data.some((e) => e.id === activeEventId)) {
-          setActiveEventId(data[0].id);
+          setActiveEventId((prev) => (prev === targetEventId ? prev : targetEventId));
+        } else if (currentActive && data.some((e) => e.id === currentActive)) {
+          // Keep current active selection
+        } else {
+          setActiveEventId((prev) => (prev === data[0].id ? prev : data[0].id));
         }
       } else {
         setActiveEventId(null);
@@ -67,7 +84,7 @@ function EventSpaceApp() {
     } catch (err) {
       console.error('Failed to load events:', err);
     }
-  }, [searchQuery, selectedYear, selectedDept, selectedTerm, selectedPriority, activeEventId]);
+  }, [searchQuery, selectedYear, selectedDept, selectedTerm, selectedPriority]);
 
   // Fetch active event details (nodes, edges, checklists, frictionLogs)
   const loadActiveEventDetails = useCallback(async (id: string) => {
@@ -79,11 +96,11 @@ function EventSpaceApp() {
     }
   }, []);
 
-  // Fetch master tasks count
+  // Fetch master tasks count (strictly matching dated items in schedule/agenda)
   const loadMasterTasksCount = useCallback(async () => {
     try {
       const res = await api.getMasterTasks(false);
-      setPendingTasksCount(res.totalPending);
+      setPendingTasksCount(res.totalAgendaDated ?? 0);
     } catch (err) {
       console.error('Failed to count master tasks:', err);
     }
@@ -107,13 +124,31 @@ function EventSpaceApp() {
 
   useEffect(() => {
     if (activeEventId) {
+      localStorage.setItem('eventspace_active_event_id', activeEventId);
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('event') !== activeEventId) {
+        url.searchParams.set('event', activeEventId);
+        window.history.replaceState(null, '', url.toString());
+      }
       loadActiveEventDetails(activeEventId);
     }
   }, [activeEventId, loadActiveEventDetails]);
 
   const handleSelectEvent = (id: string) => {
     setActiveEventId(id);
+    localStorage.setItem('eventspace_active_event_id', id);
+    const url = new URL(window.location.href);
+    url.searchParams.set('event', id);
+    window.history.replaceState(null, '', url.toString());
   };
+
+  const handleRefreshWorkspace = useCallback(async () => {
+    await Promise.all([
+      loadEvents(),
+      activeEventId ? loadActiveEventDetails(activeEventId) : Promise.resolve(),
+      loadMasterTasksCount(),
+    ]);
+  }, [loadEvents, activeEventId, loadActiveEventDetails, loadMasterTasksCount]);
 
   const handleLocateNode = (nodeId: string, eventId: string) => {
     setActiveEventId(eventId);
@@ -133,7 +168,10 @@ function EventSpaceApp() {
 
   const handleToggleCompleteEvent = async (id: string, isCompleted: boolean) => {
     try {
-      await api.updateEvent(id, { isCompleted });
+      await api.updateEvent(id, {
+        isCompleted,
+        status: isCompleted ? 'archived' : 'active',
+      });
       await loadEvents();
       if (activeEventId === id) {
         await loadActiveEventDetails(id);
@@ -143,6 +181,23 @@ function EventSpaceApp() {
       console.error('Failed to toggle event completion state:', err);
     }
   };
+
+  const handleRefreshEvent = useCallback(() => {
+    if (activeEventId) {
+      loadActiveEventDetails(activeEventId);
+      loadMasterTasksCount();
+    }
+  }, [activeEventId, loadActiveEventDetails, loadMasterTasksCount]);
+
+  const handleUpdateActiveEventNode = useCallback((nodeId: string, updates: Partial<CanvasNodeItem>) => {
+    setActiveEvent((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        nodes: (prev.nodes || []).map((n) => (n.id === nodeId ? { ...n, ...updates } : n)),
+      };
+    });
+  }, []);
 
   // Mute toggle
   const handleToggleMute = async (id: string, e: React.MouseEvent) => {
@@ -301,12 +356,70 @@ function EventSpaceApp() {
     await loadMasterTasksCount();
   };
 
+  // Leave event handler (for shared users)
+  const handleLeaveEvent = async (id: string) => {
+    try {
+      await api.leaveEvent(id);
+      const updatedEvents = events.filter((e) => e.id !== id);
+      setEvents(updatedEvents);
+      if (activeEventId === id) {
+        if (updatedEvents.length > 0) {
+          setActiveEventId(updatedEvents[0].id);
+        } else {
+          setActiveEventId(null);
+          setActiveEvent(null);
+        }
+      }
+      await loadEvents();
+      await loadMasterTasksCount();
+    } catch (err) {
+      console.error('Failed to leave event:', err);
+    }
+  };
+
+  // Compute viewer / read-only state for active event
+  const isOwner = (activeEvent as any)?.isOwner ?? true;
+  const userRole = (activeEvent as any)?.userRole;
+  const shareRole = (activeEvent as any)?.shareRole;
+  const isReadOnly = userRole === 'viewer' || (!isOwner && shareRole === 'viewer');
+
+  // Sidebar resize and collapse state
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('eventspace_sidebar_width');
+      return saved ? Math.min(500, Math.max(72, parseInt(saved, 10))) : 288;
+    } catch {
+      return 288;
+    }
+  });
+
+  const isSidebarCollapsed = sidebarWidth < 160;
+
+  const handleToggleSidebar = () => {
+    if (window.innerWidth < 1024) {
+      setSidebarOpen(!sidebarOpen);
+      return;
+    }
+    if (isSidebarCollapsed) {
+      const prev = parseInt(localStorage.getItem('eventspace_prev_sidebar_width') || '288', 10);
+      const newW = prev >= 160 ? prev : 288;
+      setSidebarWidth(newW);
+      localStorage.setItem('eventspace_sidebar_width', String(newW));
+    } else {
+      localStorage.setItem('eventspace_prev_sidebar_width', String(sidebarWidth));
+      setSidebarWidth(72);
+      localStorage.setItem('eventspace_sidebar_width', '72');
+    }
+  };
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors select-none">
       {/* 1. Left Navigation Rail (Collapsible, Filters, Traffic Lights, 44x44 Mute Toggles) */}
       <Sidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        sidebarWidth={sidebarWidth}
+        onSidebarWidthChange={setSidebarWidth}
         events={events}
         activeEventId={activeEventId}
         onSelectEvent={handleSelectEvent}
@@ -315,6 +428,10 @@ function EventSpaceApp() {
         onLocateChecklist={handleLocateChecklist}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         onOpenTrash={() => setIsTrashModalOpen(true)}
+        onOpenContacts={() => setIsContactsModalOpen(true)}
+        onOpenTemplates={() => setIsTemplatesModalOpen(true)}
+        onOpenVenues={() => setIsVenuesModalOpen(true)}
+        onLogout={logout}
         onToggleCompleteEvent={handleToggleCompleteEvent}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -334,11 +451,14 @@ function EventSpaceApp() {
         <Header
           activeEvent={activeEvent}
           sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          isCollapsedMode={isSidebarCollapsed}
+          onToggleSidebar={handleToggleSidebar}
           onOpenMasterTasks={() => setIsMasterTasksModalOpen(true)}
           onOpenNewEvent={() => setIsNewEventModalOpen(true)}
           onOpenEditEvent={() => setIsEditEventModalOpen(true)}
+          onRefreshWorkspace={handleRefreshWorkspace}
           pendingTasksCount={pendingTasksCount}
+          isReadOnly={isReadOnly}
         />
 
         {/* Top Zoned Section: Overarching Department Checklists (FM, AV, CT) */}
@@ -351,6 +471,7 @@ function EventSpaceApp() {
             onAddItem={handleAddChecklistItem}
             onUpdateItem={handleUpdateChecklistItem}
             onDeleteItem={handleDeleteChecklistItem}
+            isReadOnly={isReadOnly}
           />
         )}
 
@@ -358,12 +479,10 @@ function EventSpaceApp() {
         <CanvasZone
           activeEvent={activeEvent}
           locatedNodeId={locatedNodeId}
-          onRefreshEvent={() => {
-            if (activeEventId) {
-              loadActiveEventDetails(activeEventId);
-              loadMasterTasksCount();
-            }
-          }}
+          onRefreshEvent={handleRefreshEvent}
+          onUpdateNodeLocal={handleUpdateActiveEventNode}
+          onOpenEditEvent={() => setIsEditEventModalOpen(true)}
+          isReadOnly={isReadOnly}
         />
       </main>
 
@@ -382,6 +501,7 @@ function EventSpaceApp() {
         event={activeEvent}
         onUpdate={handleUpdateEvent}
         onDelete={handleDeleteEvent}
+        onLeave={handleLeaveEvent}
       />
 
       <MasterTasksModal
@@ -400,6 +520,7 @@ function EventSpaceApp() {
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
+        onOpenTemplates={() => setIsTemplatesModalOpen(true)}
       />
 
       <TrashBinModal
@@ -413,16 +534,56 @@ function EventSpaceApp() {
           await loadMasterTasksCount();
         }}
       />
+
+      <ContactsModal
+        isOpen={isContactsModalOpen}
+        onClose={() => setIsContactsModalOpen(false)}
+      />
+
+      <TemplatesModal
+        isOpen={isTemplatesModalOpen}
+        onClose={() => setIsTemplatesModalOpen(false)}
+        onTemplatesChanged={loadEvents}
+        onSelectTemplateToCreate={(_tplId) => {
+          setIsNewEventModalOpen(true);
+        }}
+      />
+
+      <VenuesModal
+        isOpen={isVenuesModalOpen}
+        onClose={() => setIsVenuesModalOpen(false)}
+      />
     </div>
   );
+}
+
+function AuthGate() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-3">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+        <p className="text-xs text-slate-400 font-medium">Loading EventSpace...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
+
+  return <EventSpaceApp />;
 }
 
 export default function App() {
   return (
     <ThemeProvider>
-      <SettingsProvider>
-        <EventSpaceApp />
-      </SettingsProvider>
+      <AuthProvider>
+        <SettingsProvider>
+          <AuthGate />
+        </SettingsProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

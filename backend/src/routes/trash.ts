@@ -1,18 +1,22 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db.js';
+import { requireAuth, requireWorkspace } from '../middleware/auth.js';
 
 export const trashRouter = Router();
 
-// GET /api/trash - List all soft-deleted items across events, nodes, and checklists
+trashRouter.use(requireAuth);
+trashRouter.use(requireWorkspace);
+
+// GET /api/trash - List all soft-deleted items across events, nodes, and checklists scoped to workspace
 trashRouter.get('/', async (req: Request, res: Response) => {
   try {
     const [events, nodes, checklists] = await Promise.all([
       prisma.event.findMany({
-        where: { deletedAt: { not: null } },
+        where: { deletedAt: { not: null }, workspaceId: req.workspaceId },
         orderBy: { deletedAt: 'desc' },
       }),
       prisma.canvasNode.findMany({
-        where: { deletedAt: { not: null } },
+        where: { deletedAt: { not: null }, event: { workspaceId: req.workspaceId } },
         include: {
           event: {
             select: { id: true, title: true },
@@ -21,7 +25,7 @@ trashRouter.get('/', async (req: Request, res: Response) => {
         orderBy: { deletedAt: 'desc' },
       }),
       prisma.checklistItem.findMany({
-        where: { deletedAt: { not: null } },
+        where: { deletedAt: { not: null }, event: { workspaceId: req.workspaceId } },
         include: {
           event: {
             select: { id: true, title: true },
@@ -50,6 +54,11 @@ trashRouter.post('/:type/:id/restore', async (req: Request, res: Response) => {
     const type = req.params.type as string;
 
     if (type === 'event') {
+      const existing = await prisma.event.findFirst({
+        where: { id, workspaceId: req.workspaceId },
+      });
+      if (!existing) return res.status(404).json({ error: 'Event not found in workspace' });
+
       const restored = await prisma.event.update({
         where: { id },
         data: { deletedAt: null },
@@ -58,14 +67,10 @@ trashRouter.post('/:type/:id/restore', async (req: Request, res: Response) => {
     }
 
     if (type === 'node') {
-      const node = await prisma.canvasNode.findUnique({ where: { id } });
-      if (!node) return res.status(404).json({ error: 'Node not found' });
-
-      // If parent event was deleted, restore it as well
-      await prisma.event.updateMany({
-        where: { id: node.eventId, deletedAt: { not: null } },
-        data: { deletedAt: null },
+      const existing = await prisma.canvasNode.findFirst({
+        where: { id, event: { workspaceId: req.workspaceId } },
       });
+      if (!existing) return res.status(404).json({ error: 'Node not found in workspace' });
 
       const restored = await prisma.canvasNode.update({
         where: { id },
@@ -75,13 +80,10 @@ trashRouter.post('/:type/:id/restore', async (req: Request, res: Response) => {
     }
 
     if (type === 'checklist') {
-      const item = await prisma.checklistItem.findUnique({ where: { id } });
-      if (!item) return res.status(404).json({ error: 'Checklist item not found' });
-
-      await prisma.event.updateMany({
-        where: { id: item.eventId, deletedAt: { not: null } },
-        data: { deletedAt: null },
+      const existing = await prisma.checklistItem.findFirst({
+        where: { id, event: { workspaceId: req.workspaceId } },
       });
+      if (!existing) return res.status(404).json({ error: 'Checklist not found in workspace' });
 
       const restored = await prisma.checklistItem.update({
         where: { id },
@@ -90,9 +92,9 @@ trashRouter.post('/:type/:id/restore', async (req: Request, res: Response) => {
       return res.json({ success: true, restored });
     }
 
-    return res.status(400).json({ error: 'Invalid item type' });
+    res.status(400).json({ error: 'Invalid trash item type' });
   } catch (error) {
-    console.error('Failed to restore item:', error);
+    console.error('Failed to restore trash item:', error);
     res.status(500).json({ error: 'Failed to restore item' });
   }
 });
@@ -104,37 +106,70 @@ trashRouter.delete('/:type/:id/permanent', async (req: Request, res: Response) =
     const type = req.params.type as string;
 
     if (type === 'event') {
+      const existing = await prisma.event.findFirst({
+        where: { id, workspaceId: req.workspaceId },
+      });
+      if (!existing) return res.status(404).json({ error: 'Event not found in workspace' });
+
       await prisma.event.delete({ where: { id } });
       return res.json({ success: true, message: 'Event permanently deleted' });
     }
 
     if (type === 'node') {
+      const existing = await prisma.canvasNode.findFirst({
+        where: { id, event: { workspaceId: req.workspaceId } },
+      });
+      if (!existing) return res.status(404).json({ error: 'Node not found in workspace' });
+
       await prisma.canvasNode.delete({ where: { id } });
       return res.json({ success: true, message: 'Node permanently deleted' });
     }
 
     if (type === 'checklist') {
+      const existing = await prisma.checklistItem.findFirst({
+        where: { id, event: { workspaceId: req.workspaceId } },
+      });
+      if (!existing) return res.status(404).json({ error: 'Checklist not found in workspace' });
+
       await prisma.checklistItem.delete({ where: { id } });
       return res.json({ success: true, message: 'Checklist item permanently deleted' });
     }
 
-    return res.status(400).json({ error: 'Invalid item type' });
+    res.status(400).json({ error: 'Invalid trash item type' });
   } catch (error) {
     console.error('Failed to permanently delete item:', error);
     res.status(500).json({ error: 'Failed to permanently delete item' });
   }
 });
 
-// POST /api/trash/empty - Empty all trash
-trashRouter.post('/empty', async (req: Request, res: Response) => {
+// DELETE /api/trash/empty - Permanently delete all trash in this workspace
+trashRouter.delete('/empty', async (req: Request, res: Response) => {
   try {
-    await prisma.canvasNode.deleteMany({ where: { deletedAt: { not: null } } });
-    await prisma.checklistItem.deleteMany({ where: { deletedAt: { not: null } } });
-    await prisma.event.deleteMany({ where: { deletedAt: { not: null } } });
+    const targetWorkspaceId = req.workspaceId;
 
-    res.json({ success: true, message: 'Trash emptied completely' });
+    const [deletedNodes, deletedChecklists, deletedEvents] = await Promise.all([
+      prisma.canvasNode.deleteMany({
+        where: { deletedAt: { not: null }, event: { workspaceId: targetWorkspaceId } },
+      }),
+      prisma.checklistItem.deleteMany({
+        where: { deletedAt: { not: null }, event: { workspaceId: targetWorkspaceId } },
+      }),
+      prisma.event.deleteMany({
+        where: { deletedAt: { not: null }, workspaceId: targetWorkspaceId },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Trash bin emptied successfully',
+      deletedCounts: {
+        events: deletedEvents.count,
+        nodes: deletedNodes.count,
+        checklists: deletedChecklists.count,
+      },
+    });
   } catch (error) {
-    console.error('Failed to empty trash:', error);
-    res.status(500).json({ error: 'Failed to empty trash' });
+    console.error('Failed to empty trash bin:', error);
+    res.status(500).json({ error: 'Failed to empty trash bin' });
   }
 });
