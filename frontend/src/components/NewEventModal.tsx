@@ -1,8 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Priority, EventItem, Contact } from '../types';
-import { X, Sparkles, Building2, Calendar, Copy, UserCheck, Plus, Check, LayoutTemplate } from 'lucide-react';
+import { X, Sparkles, Building2, Calendar, Copy, UserCheck, Plus, Check, LayoutTemplate, Clock, Palette, Search } from 'lucide-react';
 import { api } from '../services/api';
 import { useSettings } from '../context/SettingsContext';
+import { DateRangePicker } from './DateRangePicker';
+import { CustomTimePicker } from './CustomTimePicker';
+
+const COLOR_PRESETS = [
+  '#3B82F6', // Blue
+  '#6366F1', // Indigo
+  '#8B5CF6', // Purple
+  '#EC4899', // Pink
+  '#EF4444', // Red
+  '#F97316', // Orange
+  '#F59E0B', // Amber
+  '#10B981', // Emerald
+  '#06B6D4', // Cyan
+  '#64748B', // Slate
+];
 
 interface NewEventModalProps {
   isOpen: boolean;
@@ -13,6 +28,9 @@ interface NewEventModalProps {
     department?: string | null;
     startDate?: string | null;
     endDate?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    color?: string | null;
     priority?: Priority | null;
     contactIds?: string[];
     includeDefaultChecklists?: boolean;
@@ -24,6 +42,9 @@ interface NewEventModalProps {
       department?: string;
       startDate?: string;
       endDate?: string;
+      startTime?: string;
+      endTime?: string;
+      color?: string;
       priority?: Priority | null;
     }
   ) => Promise<void>;
@@ -39,22 +60,38 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
   const { enablePriority } = useSettings();
   const [title, setTitle] = useState('');
   const [department, setDepartment] = useState('');
+  const [hasDate, setHasDate] = useState(true);
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState('');
   const [hasEndDate, setHasEndDate] = useState(false);
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [color, setColor] = useState('#3B82F6');
   const [priority, setPriority] = useState<Priority | null>(null);
   const [copyFromId, setCopyFromId] = useState('');
+  const [templateSearchQuery, setTemplateSearchQuery] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [templates, setTemplates] = useState<EventItem[]>([]);
 
   // Strictly filter out archived items and completed events from template and clone selectors
   const availableTemplates = useMemo(
-    () => templates.filter((t) => t.status !== 'archived'),
-    [templates]
+    () => {
+      const q = templateSearchQuery.trim().toLowerCase();
+      return templates
+        .filter((t) => t.status !== 'archived')
+        .filter((t) => !q || t.title.toLowerCase().includes(q) || (t.department && t.department.toLowerCase().includes(q)));
+    },
+    [templates, templateSearchQuery]
   );
   const availableEvents = useMemo(
-    () => events.filter((e) => e.status !== 'archived' && !e.isCompleted && !e.isTemplate),
-    [events]
+    () => {
+      const q = templateSearchQuery.trim().toLowerCase();
+      return events
+        .filter((e) => e.status !== 'archived' && !e.isCompleted && !e.isTemplate)
+        .filter((e) => !q || e.title.toLowerCase().includes(q) || (e.department && e.department.toLowerCase().includes(q)));
+    },
+    [events, templateSearchQuery]
   );
 
   // Contacts (Person in Charge)
@@ -64,14 +101,31 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
   const [newContactName, setNewContactName] = useState('');
   const [newContactRole, setNewContactRole] = useState('');
 
+  // Department Combobox
+  const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
+  const departmentOptions = useMemo(() => {
+    return Array.from(new Set(availableContacts.map((c) => c.department?.trim()).filter(Boolean) as string[]));
+  }, [availableContacts]);
+
+  const filteredDepartments = useMemo(() => {
+    if (!department) return departmentOptions;
+    return departmentOptions.filter((d) => d.toLowerCase().includes(department.toLowerCase()));
+  }, [departmentOptions, department]);
+
   const resetForm = () => {
     setTitle('');
     setDepartment('');
+    setHasDate(true);
     setStartDate(new Date().toISOString().slice(0, 10));
     setEndDate('');
     setHasEndDate(false);
+    setStartTime('');
+    setEndTime('');
+    setColor('#3B82F6');
     setPriority(null);
     setCopyFromId('');
+    setTemplateSearchQuery('');
+    setIsDropdownOpen(false);
     setSelectedContactIds([]);
     setIsAddingContact(false);
     setNewContactName('');
@@ -100,9 +154,13 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
       // Switched back to Blank New Event - completely reset fields
       setTitle('');
       setDepartment('');
+      setHasDate(true);
       setStartDate(new Date().toISOString().slice(0, 10));
       setEndDate('');
       setHasEndDate(false);
+      setStartTime('');
+      setEndTime('');
+      setColor('#3B82F6');
       setPriority(null);
       return;
     }
@@ -112,9 +170,11 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
       setTitle(`${cleanName}`);
       setDepartment(src.department || '');
       if (src.startDate) {
+        setHasDate(true);
         setStartDate(new Date(src.startDate).toISOString().slice(0, 10));
       } else {
-        setStartDate(new Date().toISOString().slice(0, 10));
+        setHasDate(false);
+        setStartDate('');
       }
       if (src.endDate && src.endDate !== src.startDate) {
         setEndDate(new Date(src.endDate).toISOString().slice(0, 10));
@@ -123,6 +183,9 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
         setEndDate('');
         setHasEndDate(false);
       }
+      setStartTime(src.startTime || '');
+      setEndTime(src.endTime || '');
+      setColor(src.color || '#3B82F6');
       setPriority(src.priority ?? 'med');
     }
   };
@@ -156,15 +219,18 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
 
     try {
       setIsSubmitting(true);
-      const finalEndDate = hasEndDate && endDate ? new Date(endDate).toISOString() : undefined;
-      const finalStartDate = startDate ? new Date(startDate).toISOString() : undefined;
+      const finalStartDate = hasDate && startDate ? new Date(startDate).toISOString() : null;
+      const finalEndDate = hasDate && hasEndDate && endDate ? new Date(endDate).toISOString() : null;
 
       if (copyFromId) {
         await onDuplicate(copyFromId, {
           title: title.trim(),
           department: department.trim() || undefined,
-          startDate: finalStartDate,
-          endDate: finalEndDate,
+          startDate: finalStartDate || undefined,
+          endDate: finalEndDate || undefined,
+          startTime: startTime.trim() || undefined,
+          endTime: endTime.trim() || undefined,
+          color: color.trim() || undefined,
           priority,
         });
       } else {
@@ -173,19 +239,16 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
           department: department.trim() || undefined,
           startDate: finalStartDate,
           endDate: finalEndDate,
+          startTime: startTime.trim() || null,
+          endTime: endTime.trim() || null,
+          color: color.trim() || null,
           priority,
           contactIds: selectedContactIds,
           includeDefaultChecklists: false,
         });
       }
 
-      setTitle('');
-      setDepartment('');
-      setStartDate(new Date().toISOString().slice(0, 10));
-      setEndDate('');
-      setHasEndDate(false);
-      setCopyFromId('');
-      setSelectedContactIds([]);
+      resetForm();
       onClose();
     } catch (err) {
       console.error('Failed to create/duplicate event:', err);
@@ -220,37 +283,128 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
-          {/* Use Template / Existing Event dropdown */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1.5">
-              <LayoutTemplate className="w-3.5 h-3.5 text-slate-400" />
-              <span>Use Template / Existing Event (Optional)</span>
-            </label>
-            <select
-              value={copyFromId}
-              onChange={(e) => handleCopySourceChange(e.target.value)}
-              className="w-full h-11 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">-- Blank New Event --</option>
-              {availableTemplates.length > 0 && (
-                <optgroup label="Saved Templates">
-                  {availableTemplates.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>
-                      📋 {tpl.title} {tpl.department ? `(${tpl.department})` : ''}
-                    </option>
-                  ))}
-                </optgroup>
+          {/* Dynamic Fuzzy Search for Templates & Clones */}
+          <div className="space-y-1.5 relative">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                <LayoutTemplate className="w-3.5 h-3.5 text-slate-400" />
+                <span>Search Template / Existing Event</span>
+              </label>
+              {copyFromId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleCopySourceChange('');
+                    setTemplateSearchQuery('');
+                  }}
+                  className="text-[10px] text-slate-400 hover:text-red-500 font-medium"
+                >
+                  Clear Selection
+                </button>
               )}
-              {availableEvents.length > 0 && (
-                <optgroup label="Existing Events">
-                  {availableEvents.map((ev) => (
-                    <option key={ev.id} value={ev.id}>
-                      🗓 {ev.title} {ev.department ? `(${ev.department})` : ''}
-                    </option>
-                  ))}
-                </optgroup>
+            </div>
+
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search templates or existing events..."
+                value={templateSearchQuery}
+                onFocus={() => setIsDropdownOpen(true)}
+                onChange={(e) => {
+                  setTemplateSearchQuery(e.target.value);
+                  setIsDropdownOpen(true);
+                }}
+                className="w-full h-11 pl-8 pr-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+
+              {/* Dynamic Fuzzy Search Dropdown */}
+              {isDropdownOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setIsDropdownOpen(false)}
+                  />
+                  <ul className="absolute top-full left-0 right-0 mt-1.5 max-h-56 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                    <li
+                      onClick={() => {
+                        handleCopySourceChange('');
+                        setTemplateSearchQuery('');
+                        setIsDropdownOpen(false);
+                      }}
+                      className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer font-medium text-slate-500 dark:text-slate-400 flex items-center justify-between"
+                    >
+                      <span>-- Blank New Event --</span>
+                      {!copyFromId && <Check className="w-3.5 h-3.5 text-blue-500" />}
+                    </li>
+
+                    {availableTemplates.length > 0 && (
+                      <div>
+                        <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50">
+                          Saved Templates
+                        </div>
+                        {availableTemplates.map((tpl) => (
+                          <li
+                            key={tpl.id}
+                            onClick={() => {
+                              handleCopySourceChange(tpl.id);
+                              setTemplateSearchQuery(tpl.title);
+                              setIsDropdownOpen(false);
+                            }}
+                            className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900 dark:text-white truncate">
+                                📋 {tpl.title}
+                              </div>
+                              {tpl.department && (
+                                <div className="text-[10px] text-slate-400 truncate">{tpl.department}</div>
+                              )}
+                            </div>
+                            {copyFromId === tpl.id && <Check className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+                          </li>
+                        ))}
+                      </div>
+                    )}
+
+                    {availableEvents.length > 0 && (
+                      <div>
+                        <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50">
+                          Existing Events
+                        </div>
+                        {availableEvents.map((ev) => (
+                          <li
+                            key={ev.id}
+                            onClick={() => {
+                              handleCopySourceChange(ev.id);
+                              setTemplateSearchQuery(ev.title);
+                              setIsDropdownOpen(false);
+                            }}
+                            className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900 dark:text-white truncate">
+                                🗓 {ev.title}
+                              </div>
+                              {ev.department && (
+                                <div className="text-[10px] text-slate-400 truncate">{ev.department}</div>
+                              )}
+                            </div>
+                            {copyFromId === ev.id && <Check className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+                          </li>
+                        ))}
+                      </div>
+                    )}
+
+                    {availableTemplates.length === 0 && availableEvents.length === 0 && (
+                      <li className="p-3 text-center text-slate-400 text-xs">
+                        No matching templates or events
+                      </li>
+                    )}
+                  </ul>
+                </>
               )}
-            </select>
+            </div>
           </div>
 
           <div>
@@ -263,86 +417,159 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({
               placeholder="e.g., Annual Tech Symposium 2026"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full h-12 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
-          <div>
+          {/* Department Combobox */}
+          <div className="space-y-1.5 relative">
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
               <Building2 className="w-3.5 h-3.5 text-slate-400" />
               <span>Department / Host</span>
             </label>
-            <input
-              type="text"
-              placeholder="e.g., Faculty of Engineering"
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
-              className="w-full h-12 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="e.g., Faculty of Engineering"
+                value={department}
+                onFocus={() => setIsDeptDropdownOpen(true)}
+                onChange={(e) => {
+                  setDepartment(e.target.value);
+                  setIsDeptDropdownOpen(true);
+                }}
+                className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {department && (
+                <button
+                  type="button"
+                  onClick={() => setDepartment('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {isDeptDropdownOpen && filteredDepartments.length > 0 && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setIsDeptDropdownOpen(false)}
+                  />
+                  <ul className="absolute top-full left-0 right-0 mt-1.5 max-h-48 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                    {filteredDepartments.map((deptName) => (
+                      <li
+                        key={deptName}
+                        onClick={() => {
+                          setDepartment(deptName);
+                          setIsDeptDropdownOpen(false);
+                        }}
+                        className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between text-slate-800 dark:text-slate-200"
+                      >
+                        <span>{deptName}</span>
+                        {department === deptName && (
+                          <Check className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Unified Date Range Picker */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+              <span>Event Dates (Schedule)</span>
+            </label>
+            <DateRangePicker
+              startDate={startDate}
+              endDate={endDate}
+              onChange={(s, e) => {
+                setStartDate(s || '');
+                setEndDate(e || '');
+                setHasDate(Boolean(s));
+                setHasEndDate(Boolean(e && e !== s));
+              }}
             />
           </div>
 
-          {/* Date Picker Grid */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <span>Start Date</span>
-              </label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full h-12 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+          {/* Start and End Time Grid with CustomTimePicker */}
+          {(() => {
+            const isOneDayEvent = Boolean(startDate && (!endDate || startDate === endDate));
+            return (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Start Time</span>
+                  </label>
+                  <CustomTimePicker
+                    value={startTime}
+                    onChange={(val) => {
+                      const newStart = val || '';
+                      setStartTime(newStart);
+                      if (isOneDayEvent && newStart && endTime && endTime < newStart) {
+                        setEndTime(newStart);
+                      }
+                    }}
+                    placeholder="Select start..."
+                  />
+                </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span>End Date</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!hasEndDate) {
-                      setHasEndDate(true);
-                      setEndDate(startDate || new Date().toISOString().slice(0, 10));
-                    } else {
-                      setHasEndDate(false);
-                      setEndDate('');
-                    }
-                  }}
-                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${
-                    hasEndDate
-                      ? 'text-red-500 hover:text-red-600 bg-red-50 dark:bg-red-950/40'
-                      : 'text-blue-600 dark:text-blue-400 hover:underline'
-                  }`}
-                >
-                  {hasEndDate ? 'Clear (One-Day)' : '+ Multi-Day'}
-                </button>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    <span>End Time</span>
+                  </label>
+                  <CustomTimePicker
+                    value={endTime}
+                    minTime={isOneDayEvent && startTime ? startTime : null}
+                    onChange={(val) => {
+                      if (isOneDayEvent && startTime && val && val < startTime) {
+                        setEndTime(startTime);
+                      } else {
+                        setEndTime(val || '');
+                      }
+                    }}
+                    placeholder="Select end..."
+                  />
+                </div>
               </div>
+            );
+          })()}
 
-              <div
-                onClick={() => {
-                  if (!hasEndDate) {
-                    setHasEndDate(true);
-                    setEndDate(startDate || new Date().toISOString().slice(0, 10));
-                  }
-                }}
-                className="relative"
-              >
-                <input
-                  type="date"
-                  disabled={!hasEndDate}
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className={`w-full h-12 px-3 rounded-xl border text-xs transition-all ${
-                    hasEndDate
-                      ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-                      : 'bg-slate-100 dark:bg-slate-800/40 border-dashed border-slate-300 dark:border-slate-700 text-slate-400 cursor-pointer opacity-70'
+          {/* Custom Event Color Picker */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1.5">
+              <Palette className="w-3.5 h-3.5 text-slate-400" />
+              <span>Custom Event Color</span>
+            </label>
+            <div className="flex items-center gap-2 flex-wrap">
+              {COLOR_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setColor(preset)}
+                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                    color === preset
+                      ? 'scale-110 ring-2 ring-offset-2 ring-slate-400 dark:ring-offset-slate-900'
+                      : 'hover:scale-105'
                   }`}
+                  style={{ backgroundColor: preset }}
+                >
+                  {color === preset && <Check className="w-3.5 h-3.5 text-white" />}
+                </button>
+              ))}
+              <div className="relative flex items-center gap-1.5 ml-1">
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="w-7 h-7 rounded-lg cursor-pointer border-0 bg-transparent p-0"
                 />
+                <span className="text-[11px] font-mono text-slate-500 uppercase">{color}</span>
               </div>
             </div>
           </div>

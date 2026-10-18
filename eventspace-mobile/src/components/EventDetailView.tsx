@@ -52,11 +52,13 @@ import {
   Truck,
   Users,
   Megaphone,
+  Star,
 } from 'lucide-react';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { AutoLinkText } from '../utils/linkify';
 import { ContentWithTables } from '../utils/markdownTable';
 import { useTheme } from '../context/ThemeContext';
+import { getLuminance } from '../utils/color';
 import type {
   CanvasEdgeItem,
   CanvasNodeItem,
@@ -67,6 +69,7 @@ import type {
   Priority,
   ServerConfig,
   Subtask,
+  FrictionLogItem,
 } from '../types';
 import { mobileApi } from '../services/api';
 import { BlockModal } from './BlockModal';
@@ -264,21 +267,127 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
     };
   }, []);
 
-  // Load event details with nodes, edges, and checklists
+  // Friction Log state
+  const [frictionLogs, setFrictionLogs] = useState<FrictionLogItem[]>([]);
+  const [isFrictionLogOpen, setIsFrictionLogOpen] = useState(false);
+  const [isAddingFriction, setIsAddingFriction] = useState(false);
+  const [newFrictionTitle, setNewFrictionTitle] = useState('');
+  const [newFrictionDesc, setNewFrictionDesc] = useState('');
+  const [newFrictionSeverity, setNewFrictionSeverity] = useState<'low' | 'medium' | 'critical' | 'none'>('medium');
+  const [isSubmittingFriction, setIsSubmittingFriction] = useState(false);
+  const [frictionFilter, setFrictionFilter] = useState<'all' | 'unresolved' | 'resolved'>('all');
+
+  const isViewer =
+    (eventData as any)?.userRole?.toUpperCase() === 'VIEWER' ||
+    (initialEvent as any)?.userRole?.toUpperCase() === 'VIEWER' ||
+    (initialEvent as any)?.role?.toUpperCase() === 'VIEWER';
+
+  const unresolvedFrictionCount = useMemo(() => {
+    return frictionLogs.filter((f) => !f.resolved).length;
+  }, [frictionLogs]);
+
+  const totalAgendaCount = useMemo(() => {
+    let count = 0;
+    if (eventData?.nodes) {
+      for (const n of eventData.nodes) {
+        if (n.dueDate) count++;
+        if (n.metadata) {
+          try {
+            const m = JSON.parse(n.metadata);
+            if (Array.isArray(m.subtasks)) {
+              for (const st of m.subtasks) {
+                const isBullet = ['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(st.style || '');
+                if (!isBullet && st.dueDate) count++;
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+    return count || initialEvent.totalAgendaDated || 0;
+  }, [eventData?.nodes, initialEvent.totalAgendaDated]);
+
+  const filteredFrictionLogs = useMemo(() => {
+    return frictionLogs.filter((f) => {
+      if (frictionFilter === 'unresolved') return !f.resolved;
+      if (frictionFilter === 'resolved') return f.resolved;
+      return true;
+    });
+  }, [frictionLogs, frictionFilter]);
+
+  // Load event details with nodes, edges, checklists, and friction logs
   const loadEventDetails = async (silent = false) => {
     if (!silent) setIsLoading(true);
     else setIsRefreshing(true);
     setError(null);
 
     try {
-      const data = await mobileApi.getEvent(config.serverUrl, initialEvent.id);
+      const [data, logs] = await Promise.all([
+        mobileApi.getEvent(config.serverUrl, initialEvent.id),
+        mobileApi.getFrictionLogs(config.serverUrl, initialEvent.id).catch(() => []),
+      ]);
       setEventData(data);
+      setFrictionLogs(logs);
     } catch (err: any) {
       console.error('Failed to load event details:', err);
       setError(err.message || 'Failed to load event details');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+    }
+  };
+
+  const handleCreateFrictionLog = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newFrictionTitle.trim() || isSubmittingFriction || isViewer) return;
+    setIsSubmittingFriction(true);
+    try {
+      const created = await mobileApi.createFrictionLog(config.serverUrl, initialEvent.id, {
+        title: newFrictionTitle.trim(),
+        description: newFrictionDesc.trim() || null,
+        severity: newFrictionSeverity,
+        resolved: false,
+      });
+      setFrictionLogs((prev) => [created, ...prev]);
+      setNewFrictionTitle('');
+      setNewFrictionDesc('');
+      setNewFrictionSeverity('medium');
+      setIsAddingFriction(false);
+    } catch (err) {
+      console.error('Failed to create friction log:', err);
+    } finally {
+      setIsSubmittingFriction(false);
+    }
+  };
+
+  const handleToggleResolveFriction = async (log: FrictionLogItem) => {
+    if (isViewer) return;
+    const nextResolved = !log.resolved;
+    setFrictionLogs((prev) =>
+      prev.map((item) => (item.id === log.id ? { ...item, resolved: nextResolved } : item))
+    );
+    try {
+      await mobileApi.updateFrictionLog(
+        config.serverUrl,
+        log.id,
+        { resolved: nextResolved },
+        initialEvent.id
+      );
+    } catch (err) {
+      console.error('Failed to toggle friction log:', err);
+      setFrictionLogs((prev) =>
+        prev.map((item) => (item.id === log.id ? { ...item, resolved: !nextResolved } : item))
+      );
+    }
+  };
+
+  const handleDeleteFrictionLog = async (logId: string) => {
+    if (isViewer) return;
+    setFrictionLogs((prev) => prev.filter((item) => item.id !== logId));
+    try {
+      await mobileApi.deleteFrictionLog(config.serverUrl, logId, initialEvent.id);
+    } catch (err) {
+      console.error('Failed to delete friction log:', err);
     }
   };
 
@@ -414,7 +523,8 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
     try {
       const meta = JSON.parse(node.metadata);
       if (Array.isArray(meta.subtasks) && meta.subtasks[subtaskIndex]) {
-        if (meta.subtasks[subtaskIndex].style === 'bullet') return;
+        const stStyle = meta.subtasks[subtaskIndex].style || meta.subtasks[subtaskIndex].bulletStyle || meta.subtasks[subtaskIndex].checkboxStyle;
+        if (['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(stStyle)) return;
         meta.subtasks[subtaskIndex].done = !meta.subtasks[subtaskIndex].done;
         const updatedMetaStr = JSON.stringify(meta);
         const updated = await mobileApi.updateNode(config.serverUrl, initialEvent.id, node.id, {
@@ -748,7 +858,10 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  const enablePriority = localStorage.getItem('eventspace_enable_priority') !== 'false';
+
   const getPriorityBadge = (priority?: string | null) => {
+    if (!enablePriority) return null;
     switch (priority) {
       case 'high':
         return (
@@ -857,71 +970,182 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
       />
 
       {/* Top Header */}
-      <header className="safe-top bg-white dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800/80 px-4 py-3 shrink-0 shadow-sm backdrop-blur-md">
-        <div className="flex items-center justify-between gap-2">
-          {/* Back Button */}
-          <button
-            onClick={onBack}
-            className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white flex items-center justify-center shrink-0 transition-colors"
-            aria-label="Back to Events"
+      {(() => {
+        const hasCustomColor = Boolean(initialEvent.color && initialEvent.color.trim() && !initialEvent.isCompleted);
+        const isLightHeader = hasCustomColor && initialEvent.color ? getLuminance(initialEvent.color) > 0.6 : false;
+        const isLightBg = isLightHeader;
+
+        return (
+          <header
+            style={hasCustomColor ? { backgroundColor: initialEvent.color! } : undefined}
+            className={`safe-top border-b px-4 py-3 shrink-0 shadow-sm backdrop-blur-md ${
+              hasCustomColor
+                ? isLightHeader
+                  ? 'border-slate-900/15'
+                  : 'border-white/20'
+                : 'bg-white dark:bg-slate-900/90 border-slate-200 dark:border-slate-800/80'
+            }`}
           >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
+            <div className="flex items-center justify-between gap-2">
+              {/* Back Button */}
+              <button
+                onClick={onBack}
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors shadow-sm ${
+                  hasCustomColor
+                    ? isLightHeader
+                      ? 'bg-slate-900/10 hover:bg-slate-900/20 text-slate-900 border border-slate-900/20'
+                      : 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white border border-slate-200 dark:border-slate-700'
+                }`}
+                aria-label="Back to Events"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
 
-          {/* Event Title */}
-          <div className="flex-1 min-w-0 px-1">
-            <h1 className="text-base font-black tracking-tight text-slate-900 dark:text-white truncate">
-              {initialEvent.title}
-            </h1>
-            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-              {initialEvent.department && (
-                <span className="font-semibold text-indigo-600 dark:text-indigo-400">
-                  {initialEvent.department}
-                </span>
-              )}
-              {initialEvent.department && <span>•</span>}
-              <span>{eventData?.nodes?.length || 0} blocks</span>
+              {/* Event Title */}
+              <div className="flex-1 min-w-0 px-1">
+                <h1
+                  className={`text-base tracking-tight truncate ${
+                    hasCustomColor
+                      ? isLightHeader
+                        ? 'text-slate-900 font-bold'
+                        : 'text-white font-bold'
+                      : 'text-slate-900 dark:text-white font-black'
+                  }`}
+                >
+                  {initialEvent.title}
+                </h1>
+                <div
+                  className={`flex items-center gap-1.5 text-[11px] min-w-0 ${
+                    hasCustomColor
+                      ? isLightHeader
+                        ? 'text-slate-800 font-medium'
+                        : 'text-white/80 font-medium'
+                      : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {initialEvent.department && (
+                    <span
+                      className={`truncate max-w-[120px] ${
+                        hasCustomColor
+                          ? isLightHeader
+                            ? 'font-bold text-slate-900'
+                            : 'font-bold text-white'
+                          : 'font-semibold text-indigo-600 dark:text-indigo-400'
+                      }`}
+                    >
+                      {initialEvent.department}
+                    </span>
+                  )}
+                  {initialEvent.department && <span className="shrink-0">•</span>}
+                  <span className="shrink-0">{eventData?.nodes?.length || 0} blocks</span>
+                </div>
+              </div>
+
+              {/* Action Buttons: Friction Log, Theme Toggle, Schedule & Open in Web */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* Dedicated Friction Log Button */}
+                <button
+                  type="button"
+                  onClick={() => setIsFrictionLogOpen(true)}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors shadow-sm shrink-0 border relative ${
+                    hasCustomColor
+                      ? isLightHeader
+                        ? 'bg-slate-900/10 hover:bg-slate-900/20 text-slate-900 border border-slate-900/20'
+                        : 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
+                  }`}
+                  title="Friction Log"
+                  aria-label="Friction Log"
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {unresolvedFrictionCount > 0 && (
+                    <span
+                      className={`absolute -top-1.5 -right-1.5 px-1.5 py-0.5 min-w-[18px] h-[18px] rounded-full text-[9px] flex items-center justify-center leading-none ${
+                        hasCustomColor
+                          ? isLightHeader
+                            ? 'bg-slate-900 text-white font-extrabold shadow ring-1 ring-white/50'
+                            : 'bg-white text-slate-900 font-extrabold shadow ring-1 ring-black/20'
+                          : 'bg-rose-600 text-white font-bold ring-2 ring-white dark:ring-slate-900'
+                      }`}
+                    >
+                      {unresolvedFrictionCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Quick theme cycle */}
+                <button
+                  type="button"
+                  onClick={cycleTheme}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors shadow-sm shrink-0 border ${
+                    hasCustomColor
+                      ? isLightHeader
+                        ? 'bg-slate-900/10 hover:bg-slate-900/20 text-slate-900 border border-slate-900/20'
+                        : 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white border-slate-200 dark:border-slate-700'
+                  }`}
+                  title={`Theme: ${theme}`}
+                  aria-label="Cycle theme"
+                >
+                  {theme === 'light' ? (
+                    <Sun className={`w-4 h-4 ${hasCustomColor ? (isLightHeader ? 'text-amber-600' : 'text-amber-300') : 'text-amber-500'}`} />
+                  ) : theme === 'high-contrast' ? (
+                    <Contrast className={`w-4 h-4 ${hasCustomColor ? (isLightHeader ? 'text-blue-700' : 'text-blue-200') : 'text-blue-400'}`} />
+                  ) : (
+                    <Moon className={`w-4 h-4 ${hasCustomColor ? (isLightHeader ? 'text-indigo-700' : 'text-indigo-200') : 'text-indigo-400'}`} />
+                  )}
+                </button>
+
+                {/* Schedule button: icon-only */}
+                <button
+                  onClick={() => onOpenAgenda(initialEvent.id)}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors shadow-sm shrink-0 border relative ${
+                    hasCustomColor
+                      ? isLightHeader
+                        ? 'bg-slate-900/10 hover:bg-slate-900/20 text-slate-900 border border-slate-900/20'
+                        : 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
+                      : 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60'
+                  }`}
+                  title="Schedule / Agenda"
+                  aria-label="Schedule / Agenda"
+                >
+                  <Calendar className="w-4 h-4 shrink-0" />
+                  {totalAgendaCount > 0 && (
+                    <span
+                      className={`absolute -top-1.5 -right-1.5 px-1.5 py-0.5 min-w-[18px] h-[18px] rounded-full text-[9px] flex items-center justify-center leading-none ${
+                        hasCustomColor
+                          ? isLightHeader
+                            ? 'bg-slate-900 text-white font-extrabold shadow'
+                            : 'bg-white text-slate-900 font-extrabold shadow'
+                          : 'bg-blue-600 text-white font-bold'
+                      }`}
+                    >
+                      {totalAgendaCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Open in Web Canvas */}
+                <button
+                  onClick={handleOpenInWeb}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors shadow-sm shrink-0 border ${
+                    hasCustomColor
+                      ? isLightHeader
+                        ? 'bg-slate-900/10 hover:bg-slate-900/20 text-slate-900 border border-slate-900/20'
+                        : 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
+                  }`}
+                  title="Open event canvas on web"
+                  aria-label="Open event canvas on web"
+                >
+                  <ExternalLink className="w-4 h-4 shrink-0" />
+                </button>
+              </div>
             </div>
-          </div>
-
-          {/* Action Buttons: Theme Toggle, Schedule/Agenda & Open in Web */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* Quick theme cycle */}
-            <button
-              type="button"
-              onClick={cycleTheme}
-              className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white flex items-center justify-center border border-slate-200 dark:border-slate-700 transition-colors shadow-sm"
-              title={`Theme: ${theme}`}
-              aria-label="Cycle theme"
-            >
-              {theme === 'light' ? (
-                <Sun className="w-3.5 h-3.5 text-amber-500" />
-              ) : theme === 'high-contrast' ? (
-                <Contrast className="w-3.5 h-3.5 text-blue-400" />
-              ) : (
-                <Moon className="w-3.5 h-3.5 text-indigo-400" />
-              )}
-            </button>
-
-            <button
-              onClick={() => onOpenAgenda(initialEvent.id)}
-              className="px-2.5 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Schedule</span>
-            </button>
-
-            <button
-              onClick={handleOpenInWeb}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
-              title="Open event canvas on web"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Web Canvas</span>
-            </button>
-          </div>
-        </div>
-      </header>
+          </header>
+        );
+      })()}
 
       {/* Main Vertical Feed */}
       <main className="flex-1 overflow-y-auto p-4 space-y-4 safe-bottom">
@@ -1373,8 +1597,12 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                     } catch {}
                   }
 
+                  const isNonCheckable = (s: Subtask) =>
+                    ['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(
+                      (s as any).style || (s as any).bulletStyle || (s as any).checkboxStyle || ''
+                    );
                   const displayedSubtasks = hideCompleted
-                    ? subtasksList.filter((s) => s.style === 'bullet' || !s.done)
+                    ? subtasksList.filter((s) => isNonCheckable(s) || !s.done)
                     : subtasksList;
 
                   const formattedDate = node.dueDate
@@ -1477,12 +1705,12 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       {displayedSubtasks.length > 0 && (
                         <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/50 space-y-1.5">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
-                            Subtasks ({subtasksList.filter((s) => s.style !== 'bullet' && s.done).length}/{subtasksList.filter((s) => s.style !== 'bullet').length})
+                            Subtasks ({subtasksList.filter((s) => !isNonCheckable(s) && s.done).length}/{subtasksList.filter((s) => !isNonCheckable(s)).length})
                           </span>
                           {displayedSubtasks.map((st, idx) => {
                             const subtaskText = st.label || st.text || 'Untitled note';
-                            const isBullet = st.style === 'bullet';
-                            const isSquare = st.style === 'square';
+                            const subStyle = (st as any).style || (st as any).bulletStyle || (st as any).checkboxStyle || 'circle';
+                            const isBulletStyle = ['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(subStyle);
                             const formattedSubDate = st.dueDate
                               ? new Date(st.dueDate).toLocaleDateString(undefined, {
                                   month: 'short',
@@ -1495,31 +1723,46 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                             return (
                               <div
                                 key={st.id || idx}
-                                onClick={() => !isBullet && !isEditing && handleToggleSubtask(node, idx)}
-                                className={`flex items-center gap-2 p-1.5 rounded-lg transition-colors ${
-                                  isBullet || isEditing
+                                onClick={() => !isBulletStyle && !isEditing && handleToggleSubtask(node, idx)}
+                                className={`flex items-start gap-2 p-1.5 rounded-lg transition-colors ${
+                                  isBulletStyle || isEditing
                                     ? 'cursor-default'
                                     : 'cursor-pointer hover:bg-slate-100/60 dark:hover:bg-slate-700/40'
                                 }`}
                               >
-                                {isBullet ? (
-                                  <div className="w-4 h-4 flex items-center justify-center shrink-0">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500" />
-                                  </div>
-                                ) : isSquare ? (
-                                  <div className="w-4 h-4 text-slate-400 shrink-0 flex items-center justify-center">
+                                {/* Indicator */}
+                                {isBulletStyle ? (
+                                  subStyle === 'starred' ? (
+                                    <div className="w-4 h-[20px] flex items-center justify-center shrink-0">
+                                      <Star className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 fill-current" />
+                                    </div>
+                                  ) : subStyle === 'dash' ? (
+                                    <div className="w-4 h-[20px] flex items-center justify-center shrink-0 font-bold text-slate-400 dark:text-slate-500 text-xs select-none">
+                                      —
+                                    </div>
+                                  ) : subStyle === 'arrow' ? (
+                                    <div className="w-4 h-[20px] flex items-center justify-center shrink-0 font-bold text-slate-400 dark:text-slate-500 text-xs select-none">
+                                      →
+                                    </div>
+                                  ) : (
+                                    <div className="w-4 h-[20px] flex items-center justify-center shrink-0">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500" />
+                                    </div>
+                                  )
+                                ) : subStyle === 'square' ? (
+                                  <div className="w-4 h-[20px] text-slate-400 shrink-0 flex items-center justify-center">
                                     {st.done ? (
-                                      <CheckSquare className="w-4 h-4 text-emerald-500" />
+                                      <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
                                     ) : (
-                                      <Square className="w-4 h-4" />
+                                      <Square className="w-3.5 h-3.5 text-slate-400 rounded" />
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="w-4 h-4 text-slate-400 shrink-0 flex items-center justify-center">
+                                  <div className="w-4 h-[20px] text-slate-400 shrink-0 flex items-center justify-center">
                                     {st.done ? (
-                                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                                     ) : (
-                                      <Circle className="w-4 h-4" />
+                                      <Circle className="w-3.5 h-3.5 text-slate-400 rounded-full" />
                                     )}
                                   </div>
                                 )}
@@ -1566,8 +1809,8 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                                         setEditingSubtaskKey(`${node.id}-${idx}`);
                                         setEditingSubtaskText(subtaskText);
                                       }}
-                                      className={`text-xs flex-1 break-all [overflow-wrap:anywhere] min-w-0 cursor-pointer hover:text-blue-500 transition-colors ${
-                                        isBullet
+                                      className={`text-xs flex-1 break-all [overflow-wrap:anywhere] min-w-0 leading-[20px] cursor-pointer hover:text-blue-500 transition-colors ${
+                                        isBulletStyle
                                           ? 'text-slate-700 dark:text-slate-300 font-normal'
                                           : st.done
                                           ? 'line-through text-slate-400 dark:text-slate-500 font-normal'
@@ -1579,7 +1822,7 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                                     </span>
 
                                     {formattedSubDate && (
-                                      <span className="text-[10px] text-slate-400 font-medium px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-700/60 shrink-0">
+                                      <span className="text-[10px] text-slate-400 font-medium px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-700/60 shrink-0 mt-0.5">
                                         {formattedSubDate}
                                       </span>
                                     )}
@@ -1591,7 +1834,7 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                                         setEditingSubtaskKey(`${node.id}-${idx}`);
                                         setEditingSubtaskText(subtaskText);
                                       }}
-                                      className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-blue-500 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-colors shrink-0"
+                                      className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-blue-500 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-colors shrink-0 mt-0.5"
                                       title="Edit subtask text"
                                     >
                                       <Edit3 className="w-3 h-3" />
@@ -2004,6 +2247,298 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
               alt="Preview"
               className="max-w-full max-h-[85vh] rounded-2xl object-contain shadow-2xl"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Friction Log Modal / Slide-over Drawer */}
+      {isFrictionLogOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fadeIn"
+          onClick={() => setIsFrictionLogOpen(false)}
+        >
+          <div
+            className="w-full sm:max-w-xl max-h-[88vh] bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/10 text-rose-500 border border-rose-500/20 flex items-center justify-center shrink-0">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                      Friction Log
+                    </h2>
+                    {unresolvedFrictionCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white">
+                        {unresolvedFrictionCount} Unresolved
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Obstacles & issues recorded for {initialEvent.title}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsFrictionLogOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center justify-center transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Filter Tabs & Log Creation Action */}
+            <div className="px-4 py-2.5 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setFrictionFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg transition-colors ${
+                    frictionFilter === 'all'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  All ({frictionLogs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFrictionFilter('unresolved')}
+                  className={`px-2.5 py-1 rounded-lg transition-colors ${
+                    frictionFilter === 'unresolved'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  Open ({unresolvedFrictionCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFrictionFilter('resolved')}
+                  className={`px-2.5 py-1 rounded-lg transition-colors ${
+                    frictionFilter === 'resolved'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  Resolved ({frictionLogs.length - unresolvedFrictionCount})
+                </button>
+              </div>
+
+              {!isViewer && !isAddingFriction && (
+                <button
+                  type="button"
+                  onClick={() => setIsAddingFriction(true)}
+                  className="px-2.5 py-1 rounded-xl bg-blue-600 text-white text-xs font-bold flex items-center gap-1 hover:bg-blue-700 transition-colors shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Log Issue</span>
+                </button>
+              )}
+            </div>
+
+            {/* Read-Only Notice for Viewers */}
+            {isViewer && (
+              <div className="px-4 py-2 bg-slate-100 dark:bg-slate-800/60 text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 shrink-0">
+                <Info className="w-3.5 h-3.5 text-slate-400" />
+                <span>You have read-only access (Viewer role). Logging and resolving controls are disabled.</span>
+              </div>
+            )}
+
+            {/* Friction Creation Form (if open & !isViewer) */}
+            {!isViewer && isAddingFriction && (
+              <form
+                onSubmit={handleCreateFrictionLog}
+                className="p-4 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 space-y-3 shrink-0"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    + Log New Friction Issue
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingFriction(false)}
+                    className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  value={newFrictionTitle}
+                  onChange={(e) => setNewFrictionTitle(e.target.value)}
+                  placeholder="Issue title (e.g. Broken XLR feed, Catering delay)..."
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  autoFocus
+                />
+
+                <textarea
+                  value={newFrictionDesc}
+                  onChange={(e) => setNewFrictionDesc(e.target.value)}
+                  placeholder="Description or context (optional)..."
+                  rows={2}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Severity:</span>
+                    {(['none', 'low', 'medium', 'critical'] as const).map((sev) => (
+                      <button
+                        key={sev}
+                        type="button"
+                        onClick={() => setNewFrictionSeverity(sev)}
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase transition-all border ${
+                          newFrictionSeverity === sev
+                            ? sev === 'critical'
+                              ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                              : sev === 'medium'
+                              ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                              : sev === 'low'
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-slate-600 text-white border-slate-600 shadow-xs'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        {sev}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={!newFrictionTitle.trim() || isSubmittingFriction}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs"
+                  >
+                    {isSubmittingFriction ? 'Logging...' : 'Submit Log'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* List of Friction Logs */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {filteredFrictionLogs.length === 0 ? (
+                <div className="py-12 text-center space-y-2">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto opacity-70" />
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    {frictionFilter === 'unresolved'
+                      ? 'No open friction points! Everything is running smoothly.'
+                      : frictionFilter === 'resolved'
+                      ? 'No resolved friction logs yet.'
+                      : 'No friction logs recorded for this event.'}
+                  </p>
+                  {!isViewer && !isAddingFriction && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingFriction(true)}
+                      className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline pt-1 inline-block"
+                    >
+                      + Log a friction issue
+                    </button>
+                  )}
+                </div>
+              ) : (
+                filteredFrictionLogs.map((log) => {
+                  const severityBadgeClass =
+                    log.severity === 'critical'
+                      ? 'bg-rose-500/20 text-rose-500 dark:text-rose-400 border-rose-500/30'
+                      : log.severity === 'medium'
+                      ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                      : log.severity === 'low'
+                      ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700';
+
+                  return (
+                    <div
+                      key={log.id}
+                      className={`p-3.5 rounded-2xl border transition-all space-y-2 ${
+                        log.resolved
+                          ? 'bg-slate-50/60 dark:bg-slate-900/40 border-slate-200/60 dark:border-slate-800/60 opacity-75'
+                          : log.severity === 'critical'
+                          ? 'bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/50 shadow-xs'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xs'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded-md border ${severityBadgeClass}`}>
+                            {log.severity}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 text-[9px] font-bold rounded-md border ${
+                              log.resolved
+                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                                : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                            }`}
+                          >
+                            {log.resolved ? 'Resolved' : 'Open'}
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {new Date(log.createdAt).toLocaleDateString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+
+                        {!isViewer && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleResolveFriction(log)}
+                              className={`px-2 py-0.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all border ${
+                                log.resolved
+                                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200'
+                                  : 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 shadow-xs'
+                              }`}
+                              title={log.resolved ? 'Reopen issue' : 'Mark as resolved'}
+                            >
+                              <Check className="w-3 h-3" />
+                              <span className="text-[10px]">{log.resolved ? 'Reopen' : 'Resolve'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteFrictionLog(log.id)}
+                              className="w-6 h-6 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center justify-center transition-colors"
+                              title="Delete log"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <h4
+                          className={`text-xs font-bold ${
+                            log.resolved
+                              ? 'line-through text-slate-500 dark:text-slate-400'
+                              : 'text-slate-900 dark:text-white'
+                          }`}
+                        >
+                          {log.title}
+                        </h4>
+                        {log.description && (
+                          <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+                            <AutoLinkText text={log.description} />
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}

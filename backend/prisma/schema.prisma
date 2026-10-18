@@ -85,6 +85,7 @@ model EventShare {
   eventId   String
   userId    String
   role      String   @default("editor") // "editor" | "viewer"
+  isMuted   Boolean  @default(false)
   createdAt DateTime @default(now())
 
   event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -113,6 +114,7 @@ model Event {
   status       String?         @default("active") // "active" | "archived"
   priority     String?         @default("med") // "high", "med", "low", or null
   color        String?         // Custom event color (e.g. hex code "#3B82F6")
+  order        Int             @default(0)
   isMuted      Boolean         @default(false)
   isCompleted  Boolean         @default(false)
   isTemplate   Boolean         @default(false)
@@ -209,6 +211,8 @@ model CanvasEdge {
   targetHandle String?
   type         String?  @default("smoothstep")
   animated     Boolean  @default(false)
+  lineStyle    String   @default("dashed") // "dashed" | "solid"
+  strokeWidth  Float    @default(2.5)
   label        String?
 
   event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)

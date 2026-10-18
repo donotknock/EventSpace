@@ -14,6 +14,7 @@ export interface EventItem {
   isMuted: boolean;
   isCompleted?: boolean;
   isTemplate?: boolean;
+  totalAgendaDated?: number;
   createdAt?: string;
   updatedAt?: string;
   deletedAt?: string | null;
@@ -24,8 +25,20 @@ export interface Subtask {
   text?: string;
   label?: string;
   done: boolean;
-  style?: 'bullet' | 'circle' | 'square';
+  style?: 'bullet' | 'circle' | 'square' | 'dot' | 'dash' | 'arrow' | 'starred' | string;
+  bulletStyle?: string;
+  checkboxStyle?: string;
   dueDate?: string | null;
+}
+
+export interface FrictionLogItem {
+  id: string;
+  eventId: string;
+  title: string;
+  description?: string | null;
+  severity: 'low' | 'medium' | 'critical' | 'none';
+  resolved: boolean;
+  createdAt: string;
 }
 
 export interface CanvasNodeItem {
@@ -71,7 +84,10 @@ export interface FullEventItem extends EventItem {
   nodes: CanvasNodeItem[];
   edges: CanvasEdgeItem[];
   checklists: ChecklistItem[];
+  frictionLogs?: FrictionLogItem[];
   contacts?: any[];
+  userRole?: string;
+  role?: string;
 }
 
 export interface AgendaNode {
@@ -86,12 +102,14 @@ export interface AgendaNode {
   assignee?: string | null;
   metadata?: string | null;
   createdAt: string;
+  deletedAt?: string | null;
   event: {
     id: string;
     title: string;
     priority?: Priority | null;
     department?: string | null;
     term?: string | null;
+    color?: string | null;
   };
 }
 
@@ -103,12 +121,14 @@ export interface AgendaChecklistItem {
   isCompleted: boolean;
   order: number;
   createdAt: string;
+  deletedAt?: string | null;
   event: {
     id: string;
     title: string;
     priority?: Priority | null;
     department?: string | null;
     term?: string | null;
+    color?: string | null;
   };
 }
 
@@ -129,6 +149,7 @@ export interface NormalizedAgendaItem {
     title: string;
     department?: string | null;
     priority?: Priority | null;
+    color?: string | null;
   };
   dueDate?: string | null;
   isCompleted: boolean;

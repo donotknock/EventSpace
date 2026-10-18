@@ -1,8 +1,8 @@
 {
   "name": "eventspace-backend",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "author": "donotknock",
-  "homepage": "https://donotknock.app",
+  "homepage": "https://donotknock.app/apps/eventspace/",
   "type": "module",
   "description": "Backend API for EventSpace",
   "main": "dist/server.js",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Check,
@@ -19,10 +19,19 @@ import {
   Copy,
   Table,
   Building2,
+  Star,
 } from 'lucide-react';
 import type { CanvasNodeItem, NodeType, Priority, Subtask } from '../types';
 import { ContentWithTables, tsvToMarkdownTable } from '../utils/markdownTable';
 import { mobileApi } from '../services/api';
+import { CustomDatePicker } from './CustomDatePicker';
+import {
+  formatDate,
+  getStoredDateFormat,
+  getStoredPriorityEnabled,
+  getStoredCheckboxStyles,
+  getStoredBulletStyles,
+} from '../utils/date';
 
 interface BlockModalProps {
   isOpen: boolean;
@@ -51,6 +60,14 @@ export const BlockModal: React.FC<BlockModalProps> = ({
   defaultType = 'task',
   serverUrl,
 }) => {
+  const enablePriority = getStoredPriorityEnabled();
+  const checkboxStyles = getStoredCheckboxStyles();
+  const bulletStyles = getStoredBulletStyles();
+  const enabledStyles = useMemo(() => {
+    const combined = [...checkboxStyles, ...bulletStyles];
+    return combined.length > 0 ? combined : ['circle', 'square', 'dot', 'dash', 'arrow', 'starred'];
+  }, [checkboxStyles, bulletStyles]);
+
   const [type, setType] = useState<NodeType>(defaultType);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -59,7 +76,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
   const [assignee, setAssignee] = useState('');
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [newSubtaskText, setNewSubtaskText] = useState('');
-  const [newSubtaskStyle, setNewSubtaskStyle] = useState<'circle' | 'square' | 'bullet'>('circle');
+  const [newSubtaskStyle, setNewSubtaskStyle] = useState<string>(enabledStyles[0] || 'circle');
   const [newSubtaskDueDate, setNewSubtaskDueDate] = useState('');
   const [editingSubtaskIndex, setEditingSubtaskIndex] = useState<number | null>(null);
   const [editingSubtaskText, setEditingSubtaskText] = useState('');
@@ -148,27 +165,27 @@ export const BlockModal: React.FC<BlockModalProps> = ({
     }
 
     setNewSubtaskText('');
-    setNewSubtaskStyle('circle');
+    setNewSubtaskStyle(enabledStyles[0] || 'circle');
     setNewSubtaskDueDate('');
     setEditingSubtaskIndex(null);
     setEditingSubtaskText('');
     setIsAddingNewVenue(false);
     setNewVenueName('');
     setError(null);
-  }, [initialNode, isOpen, defaultType]);
+  }, [initialNode, isOpen, defaultType, enabledStyles]);
 
   if (!isOpen) return null;
 
   const handleAddSubtask = () => {
     if (!newSubtaskText.trim()) return;
-    const isBullet = newSubtaskStyle === 'bullet';
+    const isBulletType = ['dot', 'dash', 'arrow', 'starred', 'bullet'].includes(newSubtaskStyle);
     const subtask: Subtask = {
       id: `st-${Date.now()}`,
       text: newSubtaskText.trim(),
       label: newSubtaskText.trim(),
       done: false,
       style: newSubtaskStyle,
-      dueDate: newSubtaskDueDate ? new Date(newSubtaskDueDate).toISOString() : null,
+      dueDate: isBulletType ? null : (newSubtaskDueDate ? new Date(newSubtaskDueDate).toISOString() : null),
     };
     setSubtasks([...subtasks, subtask]);
     setNewSubtaskText('');
@@ -203,17 +220,39 @@ export const BlockModal: React.FC<BlockModalProps> = ({
     setSubtasks(
       subtasks.map((st, i) => {
         if (i !== idx) return st;
-        const currentStyle = st.style || 'circle';
-        const nextStyle: 'circle' | 'square' | 'bullet' =
-          currentStyle === 'circle' ? 'square' : currentStyle === 'square' ? 'bullet' : 'circle';
+        const currentRaw = st.style || 'circle';
+        const currentNormalized = currentRaw === 'bullet' ? 'dot' : currentRaw;
+        const styleCycle = enabledStyles.length > 0 ? enabledStyles : ['circle', 'square', 'dot', 'dash', 'arrow', 'starred'];
+        const curIdx = styleCycle.indexOf(currentNormalized as any);
+        const nextStyle = curIdx === -1 ? styleCycle[0] : styleCycle[(curIdx + 1) % styleCycle.length];
+        const isBulletType = ['dot', 'dash', 'arrow', 'starred'].includes(nextStyle);
         return {
           ...st,
           style: nextStyle,
-          done: nextStyle === 'bullet' ? false : st.done,
-          dueDate: nextStyle === 'bullet' ? null : st.dueDate,
+          done: isBulletType ? false : st.done,
+          dueDate: isBulletType ? null : st.dueDate,
         };
       })
     );
+  };
+
+  const renderStyleIcon = (style?: string) => {
+    switch (style) {
+      case 'square':
+        return <Square className="w-3.5 h-3.5 text-blue-500" />;
+      case 'dot':
+      case 'bullet':
+        return <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />;
+      case 'dash':
+        return <span className="font-bold text-slate-500 text-xs select-none leading-none">—</span>;
+      case 'arrow':
+        return <span className="font-bold text-slate-500 text-xs select-none leading-none">→</span>;
+      case 'starred':
+        return <Star className="w-3.5 h-3.5 text-slate-400 fill-current" />;
+      case 'circle':
+      default:
+        return <Circle className="w-3.5 h-3.5 text-blue-500" />;
+    }
   };
 
   const handleRemoveSubtask = (idx: number) => {
@@ -256,14 +295,17 @@ export const BlockModal: React.FC<BlockModalProps> = ({
       } catch {}
 
       // Normalize subtasks for cross-platform compatibility
-      metaObj.subtasks = subtasks.map((st) => ({
-        id: st.id,
-        label: st.label || st.text,
-        text: st.label || st.text,
-        done: st.style === 'bullet' ? false : Boolean(st.done),
-        style: st.style || 'circle',
-        dueDate: st.style === 'bullet' ? null : st.dueDate || null,
-      }));
+      metaObj.subtasks = subtasks.map((st) => {
+        const isBulletType = ['dot', 'dash', 'arrow', 'starred', 'bullet'].includes(st.style || '');
+        return {
+          id: st.id,
+          label: st.label || st.text,
+          text: st.label || st.text,
+          done: isBulletType ? false : Boolean(st.done),
+          style: st.style || 'circle',
+          dueDate: isBulletType ? null : st.dueDate || null,
+        };
+      });
 
       // Venue fields
       if (type === 'venue') {
@@ -279,7 +321,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
         type,
         title: title.trim(),
         content: content.trim() || null,
-        priority: priority || null,
+        priority: enablePriority ? (priority || null) : null,
         dueDate: dueDate ? new Date(dueDate).toISOString() : null,
         assignee: assignee.trim() || null,
         metadata: metadataStr,
@@ -564,7 +606,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                   Subtasks & Notes ({subtasks.length})
                 </label>
                 <span className="text-[10px] text-slate-400 italic">
-                  Tap style icon to cycle: Circle / Square / Bullet
+                  Tap style icon to cycle: {enabledStyles.map((s) => s === 'dot' ? 'Solid Dot' : s.charAt(0).toUpperCase() + s.slice(1)).join(' / ')}
                 </span>
               </div>
 
@@ -573,7 +615,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                 <div className="space-y-1.5 mb-2.5">
                   {subtasks.map((st, idx) => {
                     const text = st.label || st.text || '';
-                    const isBullet = st.style === 'bullet';
+                    const isBullet = ['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(st.style || '');
                     return (
                       <div
                         key={st.id || idx}
@@ -584,15 +626,9 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                           type="button"
                           onClick={() => handleCycleSubtaskStyle(idx)}
                           className="w-6 h-6 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 flex items-center justify-center shrink-0 hover:border-blue-500 text-slate-600 dark:text-slate-300"
-                          title="Cycle subtask style: Circle / Square / Bullet"
+                          title="Tap to cycle style"
                         >
-                          {st.style === 'square' ? (
-                            <Square className="w-3.5 h-3.5 text-blue-500" />
-                          ) : st.style === 'bullet' ? (
-                            <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                          ) : (
-                            <Circle className="w-3.5 h-3.5 text-blue-500" />
-                          )}
+                          {renderStyleIcon(st.style)}
                         </button>
 
                         {editingSubtaskIndex === idx ? (
@@ -644,7 +680,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                             {/* Due date */}
                             {st.dueDate && (
                               <span className="text-[10px] text-slate-400 bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded shrink-0">
-                                {new Date(st.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                {formatDate(st.dueDate)}
                               </span>
                             )}
 
@@ -677,45 +713,96 @@ export const BlockModal: React.FC<BlockModalProps> = ({
               <div className="space-y-1.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50">
                 <div className="flex items-center gap-1.5">
                   {/* Style selector chips */}
-                  <div className="flex gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setNewSubtaskStyle('circle')}
-                      className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
-                        newSubtaskStyle === 'circle'
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-                      }`}
-                    >
-                      <Circle className="w-3 h-3" />
-                      <span>Circle</span>
-                    </button>
+                  <div className="flex gap-1 shrink-0 flex-wrap">
+                    {enabledStyles.includes('circle') && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSubtaskStyle('circle')}
+                        className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
+                          newSubtaskStyle === 'circle'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <Circle className="w-3 h-3" />
+                        <span>Circle</span>
+                      </button>
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() => setNewSubtaskStyle('square')}
-                      className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
-                        newSubtaskStyle === 'square'
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-                      }`}
-                    >
-                      <Square className="w-3 h-3" />
-                      <span>Square</span>
-                    </button>
+                    {enabledStyles.includes('square') && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSubtaskStyle('square')}
+                        className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
+                          newSubtaskStyle === 'square'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <Square className="w-3 h-3" />
+                        <span>Square</span>
+                      </button>
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() => setNewSubtaskStyle('bullet')}
-                      className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
-                        newSubtaskStyle === 'bullet'
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-                      }`}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                      <span>Bullet</span>
-                    </button>
+                    {(enabledStyles.includes('dot') || enabledStyles.includes('bullet' as any)) && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSubtaskStyle('dot')}
+                        className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
+                          newSubtaskStyle === 'dot' || newSubtaskStyle === 'bullet'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                        <span>Solid Dot</span>
+                      </button>
+                    )}
+
+                    {enabledStyles.includes('dash') && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSubtaskStyle('dash')}
+                        className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
+                          newSubtaskStyle === 'dash'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <span className="font-bold text-xs leading-none">—</span>
+                        <span>Dash</span>
+                      </button>
+                    )}
+
+                    {enabledStyles.includes('arrow') && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSubtaskStyle('arrow')}
+                        className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
+                          newSubtaskStyle === 'arrow'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <span className="font-bold text-xs leading-none">→</span>
+                        <span>Arrow</span>
+                      </button>
+                    )}
+
+                    {enabledStyles.includes('starred') && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSubtaskStyle('starred')}
+                        className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
+                          newSubtaskStyle === 'starred'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <Star className="w-3 h-3 fill-current" />
+                        <span>Starred</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -734,13 +821,16 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                     className="flex-1 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
                   />
 
-                  <input
-                    type="date"
-                    value={newSubtaskDueDate}
-                    onChange={(e) => setNewSubtaskDueDate(e.target.value)}
-                    className="px-2 py-1 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
-                    title="Optional subtask due date"
-                  />
+                  <div className="shrink-0">
+                    <CustomDatePicker
+                      value={newSubtaskDueDate}
+                      onChange={(val) => setNewSubtaskDueDate(val || '')}
+                      placeholder="+ Date"
+                      size="sm"
+                      align="right"
+                      disabled={['dot', 'dash', 'arrow', 'starred', 'bullet'].includes(newSubtaskStyle)}
+                    />
+                  </div>
 
                   <button
                     type="button"
@@ -756,42 +846,43 @@ export const BlockModal: React.FC<BlockModalProps> = ({
           )}
 
           {/* Priority & Due Date */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 text-[10px]">
-                Priority
-              </label>
-              <div className="flex gap-1">
-                {(['high', 'med', 'low'] as Priority[]).map((p) => (
-                  <button
-                    type="button"
-                    key={p}
-                    onClick={() => setPriority(priority === p ? null : p)}
-                    className={`flex-1 py-1.5 rounded-lg border font-bold uppercase text-[10px] transition-all ${
-                      priority === p
-                        ? p === 'high'
-                          ? 'bg-rose-500 text-white border-rose-500'
-                          : p === 'med'
-                          ? 'bg-amber-500 text-white border-amber-500'
-                          : 'bg-blue-500 text-white border-blue-500'
-                        : 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800/60 text-slate-500'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
+          <div className={enablePriority ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-1 gap-3'}>
+            {enablePriority && (
+              <div>
+                <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 text-[10px]">
+                  Priority
+                </label>
+                <div className="flex gap-1">
+                  {(['high', 'med', 'low'] as Priority[]).map((p) => (
+                    <button
+                      type="button"
+                      key={p}
+                      onClick={() => setPriority(priority === p ? null : p)}
+                      className={`flex-1 py-1.5 rounded-lg border font-bold uppercase text-[10px] transition-all ${
+                        priority === p
+                          ? p === 'high'
+                            ? 'bg-rose-500 text-white border-rose-500'
+                            : p === 'med'
+                            ? 'bg-amber-500 text-white border-amber-500'
+                            : 'bg-blue-500 text-white border-blue-500'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800/60 text-slate-500'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 text-[10px]">
                 Due Date
               </label>
-              <input
-                type="date"
+              <CustomDatePicker
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                onChange={(val) => setDueDate(val || '')}
+                placeholder="Set due date..."
               />
             </div>
           </div>

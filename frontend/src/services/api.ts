@@ -267,6 +267,7 @@ export const api = {
     endDate?: string | null;
     startTime?: string | null;
     endTime?: string | null;
+    color?: string | null;
     term?: string | null;
     year?: string | null;
     priority?: import('../types').Priority | null;
@@ -333,13 +334,44 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete event');
   },
 
-  async saveAsTemplate(id: string, title?: string): Promise<FullEventDetails> {
+  async saveAsTemplate(
+    id: string,
+    options?: {
+      title?: string;
+      includeChecklists?: boolean;
+      includeNodes?: boolean;
+      includeNodeContent?: boolean;
+      includeSubtasks?: boolean;
+      includeContacts?: boolean;
+      includeEdges?: boolean;
+      includeTasks?: boolean;
+    }
+  ): Promise<FullEventDetails> {
     const res = await this.request(`${BASE_URL}/events/${id}/save-as-template`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify(options || {}),
     });
     if (!res.ok) throw new Error('Failed to save as template');
+    return res.json();
+  },
+
+  async reorderEvents(eventIds: string[]): Promise<void> {
+    const res = await this.request(`${BASE_URL}/events/reorder`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventIds }),
+    });
+    if (!res.ok) throw new Error('Failed to reorder events');
+  },
+
+  async toggleEventMute(eventId: string, isMuted: boolean): Promise<{ success: boolean; isMuted: boolean }> {
+    const res = await this.request(`${BASE_URL}/events/${eventId}/mute`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isMuted }),
+    });
+    if (!res.ok) throw new Error('Failed to update event mute setting');
     return res.json();
   },
 
@@ -487,6 +519,26 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete edge');
   },
 
+  async updateEdge(eventId: string, id: string, data: Partial<import('../types').CanvasEdgeItem>): Promise<import('../types').CanvasEdgeItem> {
+    const res = await this.request(`${BASE_URL}/events/${eventId}/edges/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to update edge');
+    return res.json();
+  },
+
+  async syncEdges(eventId: string, edges: Partial<import('../types').CanvasEdgeItem>[]): Promise<import('../types').CanvasEdgeItem[]> {
+    const res = await this.request(`${BASE_URL}/events/${eventId}/edges/sync`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ edges }),
+    });
+    if (!res.ok) throw new Error('Failed to sync edges');
+    return res.json();
+  },
+
   // Master Tasks & Agenda
   async getMasterTasks(includeCompleted = false): Promise<MasterTasksResponse> {
     const res = await this.request(`${BASE_URL}/tasks/master?includeCompleted=${includeCompleted}`);
@@ -627,6 +679,54 @@ export const api = {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error('Failed to empty trash');
+    return res.json();
+  },
+
+  // Database Backup & Restore
+  async exportDatabaseBackup(): Promise<void> {
+    const res = await this.request(`${BASE_URL}/backup/export`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to export database');
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `eventspace-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
+
+  async downloadDatabaseFile(): Promise<void> {
+    const res = await this.request(`${BASE_URL}/backup/download-db`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to download database file');
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `eventspace-${new Date().toISOString().slice(0, 10)}.db`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
+
+  async restoreDatabase(backupPayload: any): Promise<any> {
+    const res = await this.request(`${BASE_URL}/backup/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(backupPayload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to restore database');
+    }
     return res.json();
   },
 };

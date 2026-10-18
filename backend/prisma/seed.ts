@@ -44,9 +44,10 @@ async function main() {
   const isIfEmptyMode = process.argv.includes('--if-empty');
 
   if (isIfEmptyMode) {
-    const existingEventsCount = await prisma.event.count();
-    if (existingEventsCount > 0) {
-      console.log(`[Seed] Database already contains ${existingEventsCount} event(s). Skipping seed.`);
+    const eventCount = await prisma.event.count();
+    const userCount = await prisma.user.count();
+    if (eventCount > 0 || userCount > 0) {
+      console.log(`[Seed] Database already contains data (events: ${eventCount}, users: ${userCount}). Skipping seed.`);
       return;
     }
   }

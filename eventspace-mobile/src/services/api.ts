@@ -6,6 +6,7 @@ import type {
   FullEventItem,
   NormalizedAgendaItem,
   Subtask,
+  FrictionLogItem,
 } from '../types';
 import { storage } from './storage';
 
@@ -316,27 +317,28 @@ export const mobileApi = {
   normalizeAgenda(agenda: AgendaResponse): NormalizedAgendaItem[] {
     const items: NormalizedAgendaItem[] = [];
 
-    // 1. Process Task & Chaser Nodes (strictly dated items for schedule agenda)
+    // 1. Process Task & Chaser Nodes (strictly dated items matching desktop MasterTasksModal)
     for (const node of agenda.taskNodes) {
       if ((node.event as any)?.status === 'archived') continue;
+      if (node.deletedAt) continue;
 
-      let hasDatedSubtasks = false;
       if (node.metadata) {
         try {
           const meta = JSON.parse(node.metadata);
           if (Array.isArray(meta.subtasks) && meta.subtasks.length > 0) {
             meta.subtasks.forEach((st: Subtask, idx: number) => {
-              if (st.style === 'bullet') return;
-              const subDueDate = st.dueDate || node.dueDate;
-              if (subDueDate) {
-                hasDatedSubtasks = true;
+              if (['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(st.style || '')) return;
+              // If parent block is completed, automatically remove incomplete sub-tasks!
+              if (node.isCompleted && !st.done) return;
+              // Strictly require subtask to have its own dueDate (never fallback to node.dueDate)
+              if (st.dueDate) {
                 items.push({
-                  id: `${node.id}-sub-${idx}`,
+                  id: `${node.id}-sub-${st.id || idx}`,
                   originalId: node.id,
                   type: 'subtask',
                   title: st.label || st.text || 'Untitled subtask',
                   event: node.event,
-                  dueDate: subDueDate,
+                  dueDate: st.dueDate,
                   isCompleted: Boolean(st.done),
                   priority: node.priority,
                   nodeType: node.type,
@@ -349,7 +351,8 @@ export const mobileApi = {
         } catch {}
       }
 
-      if ((!hasDatedSubtasks || node.isCompleted) && node.dueDate) {
+      // Add parent node if it has a due date
+      if (node.dueDate) {
         items.push({
           id: node.id,
           originalId: node.id,
@@ -364,15 +367,75 @@ export const mobileApi = {
       }
     }
 
-    // 2. Overarching Department Checklists (FM/AV/CT) are intentionally excluded
-    // from the Schedule Agenda logic because they lack due dates and cause jumping behavior.
-
-    // 3. Sort strictly chronologically by dueDate:
+    // 2. Sort strictly chronologically by dueDate:
     return items.sort((a, b) => {
       const timeA = a.dueDate ? new Date(a.dueDate).getTime() : 0;
       const timeB = b.dueDate ? new Date(b.dueDate).getTime() : 0;
       return timeA - timeB;
     });
+  },
+
+  // Friction Logs API
+  async getFrictionLogs(serverUrl: string, eventId: string): Promise<FrictionLogItem[]> {
+    const base = this.cleanUrl(serverUrl);
+    const headers = await this.getAuthHeaders();
+    const res = await fetch(`${base}/api/events/${eventId}/friction-logs`, { headers });
+    if (!res.ok) throw new Error('Failed to fetch friction logs');
+    return res.json();
+  },
+
+  async createFrictionLog(
+    serverUrl: string,
+    eventId: string,
+    data: {
+      title: string;
+      description?: string | null;
+      severity?: 'low' | 'medium' | 'critical' | 'none';
+      resolved?: boolean;
+    }
+  ): Promise<FrictionLogItem> {
+    const base = this.cleanUrl(serverUrl);
+    const headers = await this.getAuthHeaders();
+    const res = await fetch(`${base}/api/events/${eventId}/friction-logs`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to create friction log');
+    return res.json();
+  },
+
+  async updateFrictionLog(
+    serverUrl: string,
+    id: string,
+    updates: Partial<FrictionLogItem>,
+    eventId?: string
+  ): Promise<FrictionLogItem> {
+    const base = this.cleanUrl(serverUrl);
+    const headers = await this.getAuthHeaders();
+    const url = eventId
+      ? `${base}/api/events/${eventId}/friction-logs/${id}`
+      : `${base}/api/friction-logs/${id}`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update friction log');
+    return res.json();
+  },
+
+  async deleteFrictionLog(serverUrl: string, id: string, eventId?: string): Promise<void> {
+    const base = this.cleanUrl(serverUrl);
+    const headers = await this.getAuthHeaders();
+    const url = eventId
+      ? `${base}/api/events/${eventId}/friction-logs/${id}`
+      : `${base}/api/friction-logs/${id}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!res.ok) throw new Error('Failed to delete friction log');
   },
 
   async getVenues(serverUrl: string): Promise<any[]> {

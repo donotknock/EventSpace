@@ -12,7 +12,10 @@ import {
   Search,
   Building2,
   CheckSquare,
+  Settings,
 } from 'lucide-react';
+import { useSettings, normalizeTrackedBlockType } from '../context/SettingsContext';
+import { triggerAgendaRefresh } from '../utils/agendaEvents';
 
 interface MasterTasksModalProps {
   isOpen: boolean;
@@ -20,6 +23,7 @@ interface MasterTasksModalProps {
   onSelectEvent: (id: string) => void;
   onTaskToggled?: () => void;
   onLocateNode?: (nodeId: string, eventId: string) => void;
+  onOpenSettings?: (initialSection?: string) => void;
 }
 
 interface AgendaItem {
@@ -30,7 +34,7 @@ interface AgendaItem {
   title: string;
   dueDate: string;
   isCompleted: boolean;
-  type: 'task' | 'chaser' | 'subtask';
+  type: 'task' | 'chaser' | 'subtask' | 'info' | 'note' | string;
   event: {
     id: string;
     title: string;
@@ -47,16 +51,17 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
   onSelectEvent,
   onTaskToggled,
   onLocateNode,
+  onOpenSettings,
 }) => {
   const [data, setData] = useState<MasterTasksResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [includeCompleted, setIncludeCompleted] = useState(false);
   const [agendaSearch, setAgendaSearch] = useState('');
 
-  const fetchTasks = useCallback(() => {
-    setIsLoading(true);
+  const fetchTasks = useCallback((showSpinner = false) => {
+    if (showSpinner) setIsLoading(true);
     api
-      .getMasterTasks(includeCompleted)
+      .getMasterTasks(true)
       .then((res) => {
         setData(res);
       })
@@ -64,13 +69,22 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
       .finally(() => {
         setIsLoading(false);
       });
-  }, [includeCompleted]);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
-      fetchTasks();
+      fetchTasks(data === null);
     }
-  }, [isOpen, fetchTasks]);
+  }, [isOpen, fetchTasks, data]);
+
+  // Listen for real-time agenda updates across the app
+  useEffect(() => {
+    const handleAgendaUpdate = () => {
+      fetchTasks(false);
+    };
+    window.addEventListener('agenda-updated', handleAgendaUpdate);
+    return () => window.removeEventListener('agenda-updated', handleAgendaUpdate);
+  }, [fetchTasks]);
 
   const handleToggleNodeTask = async (task: MasterTasksResponse['taskNodes'][0]) => {
     const newStatus = !task.isCompleted;
@@ -86,6 +100,7 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
 
     try {
       await api.updateNode(task.event.id, task.id, { isCompleted: newStatus });
+      triggerAgendaRefresh();
       if (onTaskToggled) onTaskToggled();
       if (!includeCompleted) fetchTasks();
     } catch (err) {
@@ -126,6 +141,7 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
 
     try {
       await api.updateNode(task.event.id, task.id, { metadata: updatedMeta });
+      triggerAgendaRefresh();
       if (onTaskToggled) onTaskToggled();
       if (!includeCompleted) fetchTasks();
     } catch (err) {
@@ -134,39 +150,49 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
     }
   };
 
+  const { trackSubtasksInAgenda, trackBlocksInAgenda, trackedBlockTypes } = useSettings();
+
   // STRICT REQUIREMENT: ONLY show items (tasks, subtasks, chasers) that have a date attached!
   const agendaItems = useMemo<AgendaItem[]>(() => {
     const list: AgendaItem[] = [];
     if (!data?.taskNodes) return list;
 
+    const allowCompleted = includeCompleted;
+
     for (const task of data.taskNodes) {
       // Exclude archived events
       if (task.event?.status === 'archived') continue;
 
-      // 1. Main task/chaser node (if it has a dueDate attached)
-      if (task.dueDate) {
-        if (includeCompleted || !task.isCompleted) {
+      // Filter by enabled block types
+      const blockType = normalizeTrackedBlockType(task.type);
+      if (!trackedBlockTypes.includes(blockType)) continue;
+
+      // 1. Main task/chaser/info node (if it has a dueDate attached and block tracking is enabled)
+      if (trackBlocksInAgenda && task.dueDate) {
+        if (allowCompleted || !task.isCompleted) {
           list.push({
             id: task.id,
             isSubtask: false,
             title: task.title,
             dueDate: task.dueDate,
             isCompleted: task.isCompleted,
-            type: task.type === 'chaser' ? 'chaser' : 'task',
+            type: task.type === 'chaser' ? 'chaser' : task.type === 'info' ? 'info' : 'task',
             event: task.event,
             node: task,
           });
         }
       }
 
-      // 2. Individual subtasks (if they have a dueDate attached)
-      if (task.metadata) {
+      // 2. Individual subtasks (if they have a dueDate attached and subtask tracking is enabled)
+      if (trackSubtasksInAgenda && task.metadata) {
         try {
           const meta = JSON.parse(task.metadata);
           if (Array.isArray(meta.subtasks)) {
             for (const st of meta.subtasks) {
               if (st.dueDate && st.style !== 'bullet') {
-                if (includeCompleted || !st.done) {
+                // If parent block is completed, automatically remove incomplete sub-tasks!
+                if (task.isCompleted && !st.done) continue;
+                if (allowCompleted || !st.done) {
                   list.push({
                     id: `${task.id}_st_${st.id}`,
                     isSubtask: true,
@@ -189,7 +215,37 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
 
     // Sort chronologically
     return list.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-  }, [data?.taskNodes, includeCompleted]);
+  }, [data?.taskNodes, includeCompleted, trackSubtasksInAgenda, trackBlocksInAgenda, trackedBlockTypes]);
+
+  // Compute totalAgendaCount (all incomplete dated items across all sources) and filteredAgendaCount
+  const totalAgendaCount = useMemo(() => {
+    let count = 0;
+    if (!data?.taskNodes) return 0;
+    for (const task of data.taskNodes) {
+      if (task.event?.status === 'archived') continue;
+      if (task.dueDate && !task.isCompleted) {
+        count++;
+      }
+      if (task.metadata) {
+        try {
+          const meta = JSON.parse(task.metadata);
+          if (Array.isArray(meta.subtasks)) {
+            for (const st of meta.subtasks) {
+              if (st.dueDate && st.style !== 'bullet') {
+                if (task.isCompleted && !st.done) continue;
+                if (!st.done) count++;
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+    return count;
+  }, [data?.taskNodes]);
+
+  const filteredAgendaCount = useMemo(() => {
+    return agendaItems.filter((i) => !i.isCompleted).length;
+  }, [agendaItems]);
 
   // Filter agenda items by search
   const filteredAgenda = useMemo(() => {
@@ -271,7 +327,7 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
               <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
                 <span>Schedule & Agenda</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-300 font-semibold border border-blue-200 dark:border-blue-900">
-                  {agendaItems.filter((i) => !i.isCompleted).length} Scheduled
+                  {filteredAgendaCount !== totalAgendaCount ? `${filteredAgendaCount}/${totalAgendaCount}` : `${totalAgendaCount}`} Scheduled
                 </span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -279,12 +335,27 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {onOpenSettings && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenSettings('agenda');
+                }}
+                title="Agenda Settings"
+                aria-label="Agenda Settings"
+                className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Search & Completion Controls */}
@@ -312,7 +383,7 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
         </div>
 
         {/* Google Calendar Schedule Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-6">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {isLoading ? (
             <div className="py-20 text-center text-slate-400 text-sm">
               Loading calendar agenda...
@@ -329,7 +400,7 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
               </p>
             </div>
           ) : (
-            groupedByDate.map((group) => {
+            groupedByDate.map((group, index) => {
               const d = group.date;
               const dayOfWeek = d.toLocaleDateString(undefined, { weekday: 'short' });
               const monthStr = d.toLocaleDateString(undefined, { month: 'short' });
@@ -342,7 +413,11 @@ export const MasterTasksModal: React.FC<MasterTasksModalProps> = ({
               return (
                 <div
                   key={d.toISOString()}
-                  className="flex items-start gap-4 pt-2 pb-5 border-b border-slate-100 dark:border-slate-800/80 last:border-b-0"
+                  className={`flex items-start gap-4 p-3 rounded-lg transition-all ${
+                    index % 2 === 0
+                      ? 'bg-transparent'
+                      : 'bg-slate-200/50 dark:bg-slate-800/50 border-y border-slate-200/60 dark:border-slate-700/50'
+                  }`}
                 >
                   {/* Google Calendar Widget "Breathing Room" Date Column */}
                   <div

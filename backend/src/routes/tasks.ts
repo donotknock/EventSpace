@@ -14,22 +14,32 @@ tasksRouter.get(['/master', '/agenda', '/schedule'], async (req: Request, res: R
 
     const eventWhere: any = {
       deletedAt: null,
-      workspaceId: req.workspaceId,
-      NOT: {
-        status: 'archived',
-      },
+      status: { not: 'archived' },
+      OR: [
+        { workspaceId: req.workspaceId },
+        { shares: { some: { userId: req.user!.id } } },
+      ],
     };
 
     if (eventId && typeof eventId === 'string') {
       eventWhere.id = eventId;
     } else {
-      // By default exclude muted events in master view
-      eventWhere.isMuted = false;
+      // Exclude muted events in master agenda
+      eventWhere.AND = [
+        {
+          NOT: {
+            OR: [
+              { workspaceId: req.workspaceId, isMuted: true },
+              { shares: { some: { userId: req.user!.id, isMuted: true } } },
+            ],
+          },
+        },
+      ];
     }
 
     const taskNodes = await prisma.canvasNode.findMany({
       where: {
-        type: { in: ['task', 'chaser', 'venue', 'audio', 'picture', 'video'] },
+        type: { in: ['task', 'chaser', 'venue', 'audio', 'picture', 'video', 'info', 'note'] },
         deletedAt: null,
         event: eventWhere,
       },
@@ -100,12 +110,16 @@ tasksRouter.get(['/master', '/agenda', '/schedule'], async (req: Request, res: R
     const datedNodesCount = taskNodes.filter((t) => t.dueDate !== null && !t.isCompleted).length;
     let datedSubtasksCount = 0;
     for (const node of taskNodes) {
+      if (node.isCompleted) continue; // Automatically remove subtasks if parent block is completed
       if (node.metadata) {
         try {
           const meta = JSON.parse(node.metadata);
           if (Array.isArray(meta.subtasks)) {
             datedSubtasksCount += meta.subtasks.filter(
-              (st: any) => !st.done && st.dueDate && st.style !== 'bullet'
+              (st: any) =>
+                !st.done &&
+                st.dueDate &&
+                !['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(st.style || '')
             ).length;
           }
         } catch {}
@@ -115,18 +129,7 @@ tasksRouter.get(['/master', '/agenda', '/schedule'], async (req: Request, res: R
     const filteredTaskNodes =
       includeCompleted === 'true'
         ? taskNodes
-        : taskNodes.filter((t) => {
-            if (!t.isCompleted) return true;
-            if (t.metadata) {
-              try {
-                const meta = JSON.parse(t.metadata);
-                if (Array.isArray(meta.subtasks) && meta.subtasks.some((st: any) => !st.done)) {
-                  return true;
-                }
-              } catch {}
-            }
-            return false;
-          });
+        : taskNodes.filter((t) => !t.isCompleted);
 
     res.json({
       taskNodes: filteredTaskNodes,
@@ -151,7 +154,16 @@ tasksRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
 
     // 1. Check canvas node
     const node = await prisma.canvasNode.findFirst({
-      where: { id, event: { workspaceId: req.workspaceId } },
+      where: {
+        id,
+        event: {
+          deletedAt: null,
+          OR: [
+            { workspaceId: req.workspaceId },
+            { shares: { some: { userId: req.user!.id, role: 'editor' } } },
+          ],
+        },
+      },
     });
 
     if (node) {
@@ -182,7 +194,16 @@ tasksRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
 
     // 2. Check checklist item
     const checklist = await prisma.checklistItem.findFirst({
-      where: { id, event: { workspaceId: req.workspaceId } },
+      where: {
+        id,
+        event: {
+          deletedAt: null,
+          OR: [
+            { workspaceId: req.workspaceId },
+            { shares: { some: { userId: req.user!.id, role: 'editor' } } },
+          ],
+        },
+      },
     });
 
     if (checklist) {
@@ -192,6 +213,29 @@ tasksRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
         data: { isCompleted: newStatus },
       });
       return res.json({ type: 'checklist', success: true, checklist: updated });
+    }
+
+    // Check if the item exists but user is only a viewer
+    const readOnlyItem = await prisma.canvasNode.findFirst({
+      where: {
+        id,
+        event: {
+          deletedAt: null,
+          shares: { some: { userId: req.user!.id, role: 'viewer' } },
+        },
+      },
+    }) || await prisma.checklistItem.findFirst({
+      where: {
+        id,
+        event: {
+          deletedAt: null,
+          shares: { some: { userId: req.user!.id, role: 'viewer' } },
+        },
+      },
+    });
+
+    if (readOnlyItem) {
+      return res.status(403).json({ error: 'Viewers cannot modify tasks' });
     }
 
     return res.status(404).json({ error: 'Item not found in workspace' });

@@ -12,24 +12,27 @@ import {
   ChevronLeft,
   ChevronRight,
   GripVertical,
+  Plus,
 } from 'lucide-react';
 
 interface BuildingBlocksPaletteProps {
   onSpawnNode: (type: NodeType) => void;
   hasExistingBlocks?: boolean;
+  isShortViewport?: boolean;
 }
 
 export const BuildingBlocksPalette: React.FC<BuildingBlocksPaletteProps> = ({
   onSpawnNode,
   hasExistingBlocks,
+  isShortViewport = false,
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState(Boolean(hasExistingBlocks));
+  const [isCollapsed, setIsCollapsed] = useState(Boolean(hasExistingBlocks) || isShortViewport);
 
   useEffect(() => {
-    if (hasExistingBlocks) {
+    if (hasExistingBlocks || isShortViewport) {
       setIsCollapsed(true);
     }
-  }, [hasExistingBlocks]);
+  }, [hasExistingBlocks, isShortViewport]);
 
   const blocks: {
     type: NodeType;
@@ -67,9 +70,9 @@ export const BuildingBlocksPalette: React.FC<BuildingBlocksPaletteProps> = ({
       type: 'venue',
       name: 'Venue Block',
       description: 'Setup, teardown & logistics',
-      icon: <Building2 className="w-4 h-4 text-indigo-500" />,
-      colorClasses: 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300',
-      borderClasses: 'border-indigo-200 dark:border-indigo-800/70',
+      icon: <Building2 className="w-4 h-4 text-purple-500" />,
+      colorClasses: 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300',
+      borderClasses: 'border-purple-200 dark:border-purple-800/70',
     },
     {
       type: 'picture',
@@ -83,9 +86,9 @@ export const BuildingBlocksPalette: React.FC<BuildingBlocksPaletteProps> = ({
       type: 'audio',
       name: 'Audio Block',
       description: 'Voice notes, audio & transcript',
-      icon: <Mic className="w-4 h-4 text-purple-500" />,
-      colorClasses: 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300',
-      borderClasses: 'border-purple-200 dark:border-purple-800/70',
+      icon: <Mic className="w-4 h-4 text-violet-500" />,
+      colorClasses: 'bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300',
+      borderClasses: 'border-violet-200 dark:border-violet-800/70',
     },
     {
       type: 'video',
@@ -101,6 +104,21 @@ export const BuildingBlocksPalette: React.FC<BuildingBlocksPaletteProps> = ({
     event.dataTransfer.setData('application/reactflow', nodeType);
     event.dataTransfer.effectAllowed = 'move';
   };
+
+  if (isShortViewport && isCollapsed) {
+    return (
+      <div className="absolute top-4 left-4 z-20 select-none">
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 shadow-xl text-xs font-bold text-slate-800 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 transition-all hover:scale-105 active:scale-95"
+          title="Add Block to Canvas"
+        >
+          <Plus className="w-4 h-4 text-blue-500 stroke-[2.5]" />
+          <span>Add Block</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div

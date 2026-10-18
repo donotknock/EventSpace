@@ -18,6 +18,7 @@ import { tasksRouter } from './routes/tasks.js';
 import { contactsRouter } from './routes/contacts.js';
 import { trashRouter } from './routes/trash.js';
 import { venuesRouter } from './routes/venues.js';
+import { backupRouter } from './routes/backup.js';
 
 import fs from 'fs';
 
@@ -60,24 +61,29 @@ app.use('/api/events/:eventId/nodes', nodesRouter);
 app.use('/api/events/:eventId/edges', edgesRouter);
 app.use('/api/events/:eventId/checklists', checklistsRouter);
 app.use('/api/events/:eventId/friction-logs', frictionLogsRouter);
+app.use('/api/friction-logs', frictionLogsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/contacts', contactsRouter);
 app.use('/api/venues', venuesRouter);
 app.use('/api/trash', trashRouter);
+app.use('/api/backup', backupRouter);
 
 // Production Static Companion App Serving (at /companion and /mobile)
 const candidateCompanionPaths = [
-  path.join(__dirname, '../public/companion'),             // Docker /app/public/companion
-  path.join(__dirname, '../../../eventspace-mobile/dist'),  // Root workspace compiled mobile dist
-  path.join(__dirname, '../../eventspace-mobile/dist'),    // Sub-repo compiled mobile dist
-  path.join(__dirname, '../eventspace-mobile/dist'),
-  path.join(process.cwd(), 'public/companion'),
-  path.join(process.cwd(), '../eventspace-mobile/dist'),
-  path.join(process.cwd(), '../../eventspace-mobile/dist'),
+  path.resolve(__dirname, '../../eventspace-mobile/dist'),
+  path.resolve(__dirname, '../../../eventspace-mobile/dist'),
+  path.resolve(__dirname, '../public/companion'),
+  path.resolve(process.cwd(), 'eventspace-mobile/dist'),
+  path.resolve(process.cwd(), '../eventspace-mobile/dist'),
+  path.resolve(process.cwd(), '../../eventspace-mobile/dist'),
+  path.resolve(process.cwd(), 'public/companion'),
 ];
 const companionPath = candidateCompanionPaths.find((p) => fs.existsSync(p)) || path.join(__dirname, '../public/companion');
 
-app.get(/^\/(companion|mobile)$/, (req, res) => res.redirect(301, '/companion/'));
+app.get(/^\/(companion|mobile)$/, (req, res) => {
+  const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  res.redirect(301, `/companion/${query}`);
+});
 app.use('/companion', express.static(companionPath));
 app.use('/mobile', express.static(companionPath));
 

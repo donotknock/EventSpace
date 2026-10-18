@@ -13,8 +13,12 @@ import {
   Circle,
   ExternalLink,
   Film,
+  Copy,
 } from 'lucide-react';
 import { CanvasNodeItem } from '../../types';
+import { formatMonthDay } from '../../utils/date';
+import { CustomDatePicker } from '../CustomDatePicker';
+import { triggerAgendaRefresh } from '../../utils/agendaEvents';
 
 interface VideoMetadata {
   videoUrl?: string;
@@ -78,10 +82,13 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
     node: CanvasNodeItem;
     onUpdate: (id: string, updates: Partial<CanvasNodeItem>) => void;
     onDelete: (id: string) => void;
+    onDuplicate?: (id: string) => void;
     isLocated?: boolean;
+    isReadOnly?: boolean;
   };
 
-  const { node, onUpdate, onDelete } = nodeData;
+  const { node, onUpdate, onDelete, onDuplicate } = nodeData;
+  const isReadOnly = Boolean(nodeData.isReadOnly);
 
   // Title editing state
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -164,6 +171,40 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file || (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|webm|ogg|mov|m4v)$/i))) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64Video = reader.result as string;
+      setInputUrl(base64Video);
+      saveVideoUrl(base64Video);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSaveTitle = () => {
     onUpdate(props.id, { title: titleText.trim() || 'Video Player' });
     setIsEditingTitle(false);
@@ -176,29 +217,34 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
     } else {
       onUpdate(props.id, { dueDate: null });
     }
+    triggerAgendaRefresh();
   };
 
-  const formattedDate = node.dueDate
-    ? new Date(node.dueDate).toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-      })
-    : null;
+  const formattedDate = node.dueDate ? formatMonthDay(node.dueDate) : null;
 
   // Single dot per side styling (orange brand)
-  const handleBaseClasses = `!w-3.5 !h-3.5 !bg-orange-500 hover:!bg-orange-600 dark:!bg-orange-400 !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 ${
-    props.selected ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
+  const handleBaseClasses = `!w-3.5 !h-3.5 !bg-orange-500 hover:!bg-orange-600 dark:!bg-orange-400 !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 -translate-x-1/2 -translate-y-1/2 ${
+    isReadOnly
+      ? '!pointer-events-none !opacity-0'
+      : props.selected
+      ? '!opacity-100'
+      : 'opacity-0 group-hover:opacity-100'
   }`;
 
   return (
     <div
       style={{ '--locate-color': '#f97316' } as React.CSSProperties}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={`group relative w-full h-full min-w-[320px] min-h-[300px] rounded-2xl bg-white dark:bg-slate-900 border-2 border-orange-500/60 dark:border-orange-500/50 hover:border-orange-500 shadow-lg shadow-orange-500/10 transition-all select-none box-border flex flex-col justify-between ${
+        isDragOver ? 'ring-4 ring-orange-500 border-orange-500 bg-orange-50/30' : ''
+      } ${
         nodeData.isLocated ? 'animate-locate-highlight ring-4 ring-offset-2 ring-orange-500' : ''
       } ${node.isCompleted ? 'opacity-50' : ''}`}
     >
       <NodeResizer
-        isVisible={Boolean(props.selected)}
+        isVisible={Boolean(props.selected) && !isReadOnly}
         minWidth={320}
         minHeight={300}
         color="#f97316"
@@ -219,54 +265,93 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
         }}
       />
 
-      {/* Handles */}
+      {/* 4 Cardinal Handles: Top, Right, Bottom, Left (Omnidirectional in loose mode) */}
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="top"
+        isConnectable={!isReadOnly}
+        className={handleBaseClasses}
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
       <Handle
         type="target"
         position={Position.Top}
         id="top-target"
-        className={handleBaseClasses}
-        style={{ left: '50%' }}
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
-        type="target"
-        position={Position.Left}
-        id="left-target"
+        type="source"
+        position={Position.Right}
+        id="right"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="right-source"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="bottom"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="bottom-source"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="left"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ left: '50%' }}
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="left-target"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
       />
 
       {/* Header */}
       <div className="p-3 border-b border-slate-100 dark:border-slate-800 rounded-t-2xl flex items-center justify-between gap-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onUpdate(props.id, { isCompleted: !node.isCompleted });
-            }}
-            className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
-              node.isCompleted
-                ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
-                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-            title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
-          >
-            {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUpdate(props.id, { isCompleted: !node.isCompleted });
+                triggerAgendaRefresh();
+              }}
+              className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
+                node.isCompleted
+                  ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
+            >
+              {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+            </button>
+          )}
           <div className="flex-shrink-0 text-orange-500">
             <Video className="w-4 h-4" />
           </div>
@@ -275,96 +360,71 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
           </span>
         </div>
 
-        {/* Right side: Native Date Tag & Delete */}
+        {/* Right side: 1. Duplicate & Delete (hover only), 2. Date (conditional visibility) */}
         <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
-          <div
-            className="relative inline-flex items-center nodrag nopan"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            {formattedDate ? (
-              <div
+          {/* Action buttons inside hover-only wrapper */}
+          <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150">
+            {/* 1. Duplicate button */}
+            {!isReadOnly && onDuplicate && (
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                  if (input) {
-                    try {
-                      input.showPicker();
-                    } catch {
-                      input.focus();
-                    }
-                  }
+                  onDuplicate(props.id);
                 }}
-                className="relative flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 transition-all cursor-pointer"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-950/50 transition-all"
+                title="Duplicate block"
               >
-                <Calendar className="w-3 h-3 flex-shrink-0" />
-                <span>{formattedDate}</span>
-                <input
-                  type="date"
-                  value={dateValue}
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                  title="Click to change date"
-                />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    handleDateChange('');
-                  }}
-                  className="relative z-20 ml-0.5 p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
-                  title="Clear date"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
-              </div>
-            ) : (
-              <div
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* 2. Delete button */}
+            {!isReadOnly && (
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                  if (input) {
-                    try {
-                      input.showPicker();
-                    } catch {
-                      input.focus();
-                    }
-                  }
+                  onDelete(props.id);
                 }}
-                className="relative flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all cursor-pointer"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
+                title="Delete node"
               >
-                <Calendar className="w-3 h-3 flex-shrink-0" />
-                <span>Date</span>
-                <input
-                  type="date"
-                  value={dateValue}
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                  title="Click to set date"
-                />
-              </div>
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(props.id);
-            }}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
-            title="Delete node"
+          {/* 3. Date picker badge at far right */}
+          <div
+            className={`nodrag nopan order-last ${
+              dateValue
+                ? 'opacity-100 pointer-events-auto'
+                : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-150'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
           >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+            <CustomDatePicker
+              value={dateValue}
+              onChange={(newDate) => handleDateChange(newDate || '')}
+              placeholder="+ Date"
+              size="sm"
+              align="right"
+              disabled={isReadOnly}
+              buttonClassName={
+                dateValue
+                  ? 'h-6 px-2 text-[11px] font-bold rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                  : 'h-6 px-1.5 text-[10px] font-semibold rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-700'
+              }
+            />
+          </div>
         </div>
       </div>
 
       {/* Node Body with internal scrollable container */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-3 nodrag">
+      <div
+        className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-3 nodrag nowheel"
+        onWheel={(e) => e.stopPropagation()}
+      >
         {/* Title row */}
         {isEditingTitle ? (
           <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -395,20 +455,26 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
         ) : (
           <div className="flex items-start justify-between gap-1 group/title min-w-0">
             <h4
-              onDoubleClick={() => setIsEditingTitle(true)}
-              className={`text-lg font-semibold cursor-pointer transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+              onDoubleClick={() => {
+                if (!isReadOnly) setIsEditingTitle(true);
+              }}
+              className={`text-lg font-semibold ${
+                isReadOnly ? 'cursor-default' : 'cursor-pointer hover:text-orange-600 dark:hover:text-orange-400'
+              } transition-colors leading-snug break-words min-w-0 ${
                 node.isCompleted
                   ? 'line-through text-slate-400 dark:text-slate-500'
-                  : 'text-slate-900 dark:text-slate-100 hover:text-orange-600 dark:hover:text-orange-400'
+                  : 'text-slate-900 dark:text-slate-100'
               }`}
-              title="Double-click to edit title"
+              title={isReadOnly ? undefined : 'Double-click to edit title'}
             >
               {node.title || 'Video Player'}
             </h4>
-            <Edit3
-              onClick={() => setIsEditingTitle(true)}
-              className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
-            />
+            {!isReadOnly && (
+              <Edit3
+                onClick={() => setIsEditingTitle(true)}
+                className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
+              />
+            )}
           </div>
         )}
 
@@ -439,14 +505,23 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
               <span className="font-semibold uppercase tracking-wider text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
                 {parsedSource.type}
               </span>
-              <button
-                type="button"
-                onClick={handleRemoveVideo}
-                className="text-red-500 hover:text-red-600 dark:hover:text-red-400 font-medium text-[11px] hover:underline"
-              >
-                Change Video
-              </button>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={handleRemoveVideo}
+                  className="text-red-500 hover:text-red-600 dark:hover:text-red-400 font-medium text-[11px] hover:underline"
+                >
+                  Change Video
+                </button>
+              )}
             </div>
+          </div>
+        ) : isReadOnly ? (
+          <div className="rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 p-4 space-y-1 text-center">
+            <div className="w-8 h-8 mx-auto rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center">
+              <Film className="w-4 h-4" />
+            </div>
+            <p className="text-xs text-slate-400 font-medium">No video attached</p>
           </div>
         ) : (
           <div className="rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-700/80 bg-slate-50/50 dark:bg-slate-800/30 p-3 space-y-2 text-center">
@@ -457,7 +532,7 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
               Embed or Upload Video
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Paste a YouTube, Vimeo, or direct video URL, or upload an MP4/WebM.
+              Paste a YouTube, Vimeo, or direct video URL, or drag & drop video file.
             </p>
 
             <div className="flex items-center gap-1.5 pt-1">
@@ -528,24 +603,31 @@ export const VideoNode: React.FC<NodeProps> = (props) => {
           <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
             Video Notes & Presentation Cue
           </label>
-          <textarea
-            rows={2}
-            value={caption}
-            placeholder="Timestamps, presentation cues, playback instructions..."
-            onChange={(e) => {
-              setCaption(e.target.value);
-              const updatedMeta: VideoMetadata = {
-                ...metadataObj,
-                videoUrl: activeVideoUrl,
-                caption: e.target.value,
-              };
-              onUpdate(props.id, {
-                content: e.target.value,
-                metadata: JSON.stringify(updatedMeta),
-              });
-            }}
-            className="w-full text-xs p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none font-normal"
-          />
+          {isReadOnly ? (
+            <div className="w-full text-xs p-2 rounded-xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800/60 text-slate-700 dark:text-slate-300 min-h-[44px] whitespace-pre-wrap break-words">
+              {caption || <span className="italic text-slate-400">No notes provided</span>}
+            </div>
+          ) : (
+            <textarea
+              rows={2}
+              value={caption}
+              placeholder="Timestamps, presentation cues, playback instructions..."
+              onChange={(e) => {
+                setCaption(e.target.value);
+                const updatedMeta: VideoMetadata = {
+                  ...metadataObj,
+                  videoUrl: activeVideoUrl,
+                  caption: e.target.value,
+                };
+                onUpdate(props.id, {
+                  content: e.target.value,
+                  metadata: JSON.stringify(updatedMeta),
+                });
+              }}
+              onWheel={(e) => e.stopPropagation()}
+              className="w-full text-xs p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none font-normal nodrag nowheel break-words"
+            />
+          )}
         </div>
       </div>
     </div>

@@ -1,0 +1,39 @@
+# Version control & local IDEs
+.git
+.gitignore
+.vscode
+.idea
+
+# Dependencies & Build artifacts
+node_modules
+dist
+dist-ssr
+
+# Databases & SQLite WAL
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/prisma/*.db
+dev.db
+eventspace.db
+data/
+/data
+/data/
+
+# Environment files & logs
+.env
+.env.*
+!.env.example
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS metadata & temporary files
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+*~

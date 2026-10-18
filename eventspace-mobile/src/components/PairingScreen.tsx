@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   QrCode,
   Smartphone,
@@ -34,6 +34,20 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({ onPaired }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      const urlCode = params.get('code') || params.get('pin');
+      const urlServer = params.get('server') || params.get('serverUrl');
+      const resolvedServer = urlServer || getInitialServerUrl();
+      if (urlServer) setServerUrl(urlServer);
+      if (urlCode) {
+        setPin(urlCode);
+        handlePair(resolvedServer, urlCode);
+      }
+    }
+  }, []);
 
   const handlePair = async (urlToTest = serverUrl, pinToTest = pin) => {
     const cleanUrl = mobileApi.cleanUrl(urlToTest);

@@ -208,12 +208,16 @@ eventsRouter.get('/', async (req: Request, res: Response) => {
 
     const events = await prisma.event.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        { order: 'asc' },
+        { createdAt: 'desc' },
+      ],
       include: {
         shares: {
           select: {
             userId: true,
             role: true,
+            isMuted: true,
           },
         },
         contacts: true,
@@ -231,6 +235,7 @@ eventsRouter.get('/', async (req: Request, res: Response) => {
             type: true,
             isCompleted: true,
             dueDate: true,
+            metadata: true,
           },
         },
         checklists: {
@@ -263,8 +268,28 @@ eventsRouter.get('/', async (req: Request, res: Response) => {
     const enriched = filteredEvents.map((ev) => {
       const isOwner = ev.workspaceId === req.workspaceId;
       const userShare = (ev as any).shares?.find((s: any) => s.userId === req.user!.id);
+      
+      let scheduledCount = ev.nodes.filter((n) => n.dueDate !== null && !n.isCompleted).length;
+      for (const node of ev.nodes) {
+        if (node.isCompleted) continue;
+        if (node.metadata) {
+          try {
+            const meta = JSON.parse(node.metadata);
+            if (Array.isArray(meta.subtasks)) {
+              scheduledCount += meta.subtasks.filter(
+                (st: any) => !st.done && st.dueDate && st.style !== 'bullet'
+              ).length;
+            }
+          } catch {}
+        }
+      }
+
+      const effectiveIsMuted = isOwner ? ev.isMuted : (userShare?.isMuted ?? false);
+
       return {
         ...ev,
+        isMuted: effectiveIsMuted,
+        totalAgendaDated: scheduledCount,
         isOwner,
         isShared: !isOwner,
         userRole: isOwner ? 'owner' : (userShare?.role || 'viewer'),
@@ -276,6 +301,81 @@ eventsRouter.get('/', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Failed to fetch events:', error);
     res.status(500).json({ error: 'Failed to fetch events' });
+  }
+});
+
+// PUT /api/events/reorder - Reorder events in directory
+eventsRouter.put('/reorder', async (req: Request, res: Response) => {
+  try {
+    const { eventIds } = req.body;
+    if (!Array.isArray(eventIds)) {
+      return res.status(400).json({ error: 'eventIds must be an array of event IDs' });
+    }
+
+    await prisma.$transaction(
+      eventIds.map((id, index) =>
+        prisma.event.updateMany({
+          where: {
+            id,
+            OR: [
+              { workspaceId: req.workspaceId },
+              { shares: { some: { userId: req.user!.id } } },
+            ],
+          },
+          data: { order: index },
+        })
+      )
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to reorder events:', error);
+    res.status(500).json({ error: 'Failed to reorder events' });
+  }
+});
+
+// PATCH /api/events/:id/mute - Toggle personal notification mute for event (Viewer/Editor/Owner)
+eventsRouter.patch('/:id/mute', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const { isMuted } = req.body;
+    const shouldMute = typeof isMuted === 'boolean' ? isMuted : true;
+
+    // Check if user is owner
+    const ownerEvent = await prisma.event.findFirst({
+      where: { id, workspaceId: req.workspaceId, deletedAt: null },
+    });
+
+    if (ownerEvent) {
+      const updated = await prisma.event.update({
+        where: { id },
+        data: { isMuted: shouldMute },
+      });
+      return res.json({ success: true, isMuted: updated.isMuted });
+    }
+
+    // Check if user is shared
+    const share = await prisma.eventShare.findUnique({
+      where: {
+        eventId_userId: {
+          eventId: id,
+          userId: req.user!.id,
+        },
+      },
+    });
+
+    if (share) {
+      const updatedShare = await prisma.eventShare.update({
+        where: { id: share.id },
+        data: { isMuted: shouldMute },
+      });
+      return res.json({ success: true, isMuted: updatedShare.isMuted });
+    }
+
+    return res.status(404).json({ error: 'Event not found or no access' });
+  } catch (error) {
+    console.error('Failed to update event mute status:', error);
+    res.status(500).json({ error: 'Failed to update mute status' });
   }
 });
 
@@ -322,9 +422,11 @@ eventsRouter.get('/:id', async (req: Request, res: Response) => {
     const isOwner = event.workspaceId === req.workspaceId;
     const userShare = event.shares?.find((s) => s.userId === req.user!.id);
     const userRole = isOwner ? 'owner' : (userShare?.role || 'viewer');
+    const effectiveIsMuted = isOwner ? event.isMuted : (userShare?.isMuted ?? false);
 
     res.json({
       ...event,
+      isMuted: effectiveIsMuted,
       isOwner,
       isShared: !isOwner,
       userRole,
@@ -607,8 +709,8 @@ eventsRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
     const original = await prisma.event.findFirst({
       where: { id, workspaceId: req.workspaceId },
       include: {
-        checklists: true,
-        nodes: true,
+        checklists: { where: { deletedAt: null } },
+        nodes: { where: { deletedAt: null } },
         edges: true,
       },
     });
@@ -618,10 +720,14 @@ eventsRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
     }
 
     // Create the new event
+    const duplicatedTitle = title
+      ? (title.endsWith('(Copy)') ? title : `${title} (Copy)`)
+      : `${original.title} (Copy)`;
+
     const duplicatedEvent = await prisma.event.create({
       data: {
         workspaceId: req.workspaceId,
-        title: title || `${original.title} (Copy)`,
+        title: duplicatedTitle,
         department: department !== undefined ? department : original.department,
         term: original.term,
         year: original.year,
@@ -629,6 +735,7 @@ eventsRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
         endDate: endDate ? new Date(endDate) : original.endDate,
         startTime: original.startTime,
         endTime: original.endTime,
+        color: original.color,
         status: 'active',
         priority: priority !== undefined ? priority : original.priority,
         isMuted: false,
@@ -739,14 +846,24 @@ eventsRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
 eventsRouter.post('/:id/save-as-template', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { title } = req.body;
+    const {
+      title,
+      includeChecklists = true,
+      includeNodes = true,
+      includeNodeContent = false,
+      includeSubtasks = false,
+      includeContacts = false,
+      includeEdges = true,
+      includeTasks = true,
+    } = req.body;
 
     const original = await prisma.event.findFirst({
       where: { id, workspaceId: req.workspaceId },
       include: {
-        checklists: true,
-        nodes: true,
+        checklists: { where: { deletedAt: null } },
+        nodes: { where: { deletedAt: null } },
         edges: true,
+        contacts: true,
       },
     });
 
@@ -755,6 +872,7 @@ eventsRouter.post('/:id/save-as-template', async (req: Request, res: Response) =
     }
 
     const templateTitle = title?.trim() || `${original.title} (Template)`;
+    const shouldIncludeChecklists = includeTasks !== undefined ? Boolean(includeTasks) : Boolean(includeChecklists);
 
     // Create template with isTemplate = true, stripping all specific event details
     const templateEvent = await prisma.event.create({
@@ -773,59 +891,79 @@ eventsRouter.post('/:id/save-as-template', async (req: Request, res: Response) =
         viewportX: original.viewportX,
         viewportY: original.viewportY,
         viewportZoom: original.viewportZoom,
-        checklists: {
-          create: original.checklists.map((c) => ({
-            category: c.category,
-            content: c.content,
-            isCompleted: false,
-            order: c.order,
-            workspaceId: req.workspaceId,
-          })),
-        },
+        contacts:
+          includeContacts && original.contacts.length > 0
+            ? { connect: original.contacts.map((c) => ({ id: c.id })) }
+            : undefined,
+        checklists: shouldIncludeChecklists
+          ? {
+              create: original.checklists.map((c) => ({
+                category: c.category,
+                content: c.content,
+                isCompleted: false,
+                order: c.order,
+                workspaceId: req.workspaceId,
+              })),
+            }
+          : undefined,
       },
     });
 
     const idMap = new Map<string, string>();
 
-    for (const oldNode of original.nodes) {
-      const newNode = await prisma.canvasNode.create({
-        data: {
-          workspaceId: req.workspaceId,
-          eventId: templateEvent.id,
-          type: oldNode.type,
-          xPosition: oldNode.xPosition,
-          yPosition: oldNode.yPosition,
-          title: oldNode.title,
-          content: null,
-          isCompleted: false,
-          dueDate: null,
-          assignee: null,
-          priority: null,
-          metadata: JSON.stringify({ subtasks: [] }),
-        },
-      });
+    if (includeNodes) {
+      for (const oldNode of original.nodes) {
+        let metaString = JSON.stringify({ subtasks: [] });
+        if (includeSubtasks && oldNode.metadata) {
+          try {
+            const parsed = JSON.parse(oldNode.metadata);
+            if (Array.isArray(parsed.subtasks)) {
+              // Strip completion from subtasks in template
+              parsed.subtasks = parsed.subtasks.map((st: any) => ({ ...st, done: false }));
+              metaString = JSON.stringify(parsed);
+            }
+          } catch {}
+        }
 
-      idMap.set(oldNode.id, newNode.id);
-    }
-
-    if (original.edges.length > 0) {
-      const validEdges = original.edges
-        .filter((e) => idMap.has(e.sourceId) && idMap.has(e.targetId))
-        .map((e) => ({
-          eventId: templateEvent.id,
-          sourceId: idMap.get(e.sourceId)!,
-          targetId: idMap.get(e.targetId)!,
-          sourceHandle: e.sourceHandle,
-          targetHandle: e.targetHandle,
-          type: e.type,
-          animated: e.animated,
-          label: e.label,
-        }));
-
-      if (validEdges.length > 0) {
-        await prisma.canvasEdge.createMany({
-          data: validEdges,
+        const newNode = await prisma.canvasNode.create({
+          data: {
+            workspaceId: req.workspaceId,
+            eventId: templateEvent.id,
+            type: oldNode.type,
+            xPosition: oldNode.xPosition,
+            yPosition: oldNode.yPosition,
+            title: oldNode.title,
+            content: includeNodeContent ? oldNode.content : null,
+            isCompleted: false,
+            dueDate: null,
+            assignee: null,
+            priority: null,
+            metadata: metaString,
+          },
         });
+
+        idMap.set(oldNode.id, newNode.id);
+      }
+
+      if (includeEdges && original.edges.length > 0) {
+        const validEdges = original.edges
+          .filter((e) => idMap.has(e.sourceId) && idMap.has(e.targetId))
+          .map((e) => ({
+            eventId: templateEvent.id,
+            sourceId: idMap.get(e.sourceId)!,
+            targetId: idMap.get(e.targetId)!,
+            sourceHandle: e.sourceHandle,
+            targetHandle: e.targetHandle,
+            type: e.type,
+            animated: e.animated,
+            label: e.label,
+          }));
+
+        if (validEdges.length > 0) {
+          await prisma.canvasEdge.createMany({
+            data: validEdges,
+          });
+        }
       }
     }
 

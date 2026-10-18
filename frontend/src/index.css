@@ -35,12 +35,46 @@ html.font-dyslexic select {
 /* High contrast accessibility mode */
 html.high-contrast {
   --tw-border-opacity: 1 !important;
-  filter: contrast(125%);
 }
 
-html.high-contrast body {
+html.high-contrast body,
+html.high-contrast #root {
   background-color: #000000 !important;
   color: #ffffff !important;
+}
+
+html.high-contrast .bg-slate-900,
+html.high-contrast .bg-slate-950,
+html.high-contrast .bg-slate-900\/80,
+html.high-contrast .bg-slate-900\/90,
+html.high-contrast .bg-slate-900\/95,
+html.high-contrast .dark\:bg-slate-900,
+html.high-contrast .dark\:bg-slate-950,
+html.high-contrast .dark\:bg-slate-900\/80,
+html.high-contrast .dark\:bg-slate-900\/90,
+html.high-contrast .dark\:bg-slate-900\/95,
+html.high-contrast .dark\:bg-slate-800,
+html.high-contrast .dark\:bg-slate-800\/80,
+html.high-contrast .dark\:bg-slate-800\/90 {
+  background-color: #000000 !important;
+}
+
+html.high-contrast .border-slate-700,
+html.high-contrast .border-slate-800,
+html.high-contrast .dark\:border-slate-700,
+html.high-contrast .dark\:border-slate-800,
+html.high-contrast .dark\:border-slate-700\/80,
+html.high-contrast .dark\:border-slate-700\/60,
+html.high-contrast .dark\:border-slate-700\/50 {
+  border-color: #ffffff !important;
+  border-width: 2px !important;
+}
+
+html.high-contrast .text-slate-400,
+html.high-contrast .text-slate-500,
+html.high-contrast .dark\:text-slate-400,
+html.high-contrast .dark\:text-slate-500 {
+  color: #e2e8f0 !important;
 }
 
 /* Touch & canvas optimization */

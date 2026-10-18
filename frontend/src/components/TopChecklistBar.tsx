@@ -19,6 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { ChecklistItemData } from '../types';
 import { api } from '../services/api';
+import { triggerAgendaRefresh } from '../utils/agendaEvents';
 import {
   Building2,
   Tv,
@@ -43,6 +44,7 @@ import {
   Palette,
   GripHorizontal,
   GripVertical,
+  Edit3,
 } from 'lucide-react';
 
 interface TopChecklistBarProps {
@@ -52,6 +54,7 @@ interface TopChecklistBarProps {
   onAddItem: (category: string, content: string) => Promise<void>;
   onUpdateItem: (id: string, content: string) => Promise<void>;
   onDeleteItem: (id: string) => Promise<void>;
+  onReorderItems?: (reordered: ChecklistItemData[]) => void;
   locatedCategory?: string | null;
   isReadOnly?: boolean;
 }
@@ -179,7 +182,10 @@ const SortableTaskRow: React.FC<SortableTaskRowProps> = ({
 
           <button
             onClick={() => {
-              if (!isReadOnly) onToggleItem(item.id, !item.isCompleted);
+              if (!isReadOnly) {
+                onToggleItem(item.id, !item.isCompleted);
+                triggerAgendaRefresh();
+              }
             }}
             disabled={isReadOnly}
             className={`flex items-center gap-2 flex-1 text-left min-w-0 ${
@@ -212,7 +218,7 @@ const SortableTaskRow: React.FC<SortableTaskRowProps> = ({
                 className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-blue-500 transition-colors"
                 title="Edit task text"
               >
-                <Check className="w-3 h-3" />
+                <Edit3 className="w-3 h-3" />
               </button>
               <button
                 onClick={() => onDeleteItem(item.id)}
@@ -236,6 +242,7 @@ export const TopChecklistBar: React.FC<TopChecklistBarProps> = ({
   onAddItem,
   onUpdateItem,
   onDeleteItem,
+  onReorderItems,
   locatedCategory,
   isReadOnly = false,
 }) => {
@@ -253,13 +260,14 @@ export const TopChecklistBar: React.FC<TopChecklistBarProps> = ({
     }
   });
 
-  // Customizable categories & styling configs
+  // Customizable categories & styling configs (strictly scoped per event to avoid cross-event bleed)
   const [customCategories, setCustomCategories] = useState<string[]>(() => {
     try {
-      const saved = localStorage.getItem('eventspace_custom_categories');
-      return saved ? JSON.parse(saved) : ['FM', 'AV', 'CT'];
+      if (!eventId) return [];
+      const saved = localStorage.getItem(`eventspace_custom_categories_${eventId}`);
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return ['FM', 'AV', 'CT'];
+      return [];
     }
   });
 
@@ -271,6 +279,20 @@ export const TopChecklistBar: React.FC<TopChecklistBarProps> = ({
       return DEFAULT_CATEGORY_CONFIGS;
     }
   });
+
+  // Re-sync custom categories when switching events
+  useEffect(() => {
+    try {
+      if (eventId) {
+        const saved = localStorage.getItem(`eventspace_custom_categories_${eventId}`);
+        setCustomCategories(saved ? JSON.parse(saved) : []);
+      } else {
+        setCustomCategories([]);
+      }
+    } catch {
+      setCustomCategories([]);
+    }
+  }, [eventId]);
 
   // Screen-centered React Portal modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -300,11 +322,13 @@ export const TopChecklistBar: React.FC<TopChecklistBarProps> = ({
 
   useEffect(() => {
     try {
-      localStorage.setItem('eventspace_custom_categories', JSON.stringify(customCategories));
+      if (eventId) {
+        localStorage.setItem(`eventspace_custom_categories_${eventId}`, JSON.stringify(customCategories));
+      }
     } catch (e) {
       console.warn('Failed to save categories order', e);
     }
-  }, [customCategories]);
+  }, [eventId, customCategories]);
 
   // Scroll to and highlight located category
   useEffect(() => {
@@ -411,33 +435,48 @@ export const TopChecklistBar: React.FC<TopChecklistBarProps> = ({
     const activeData = active.data.current;
     const overData = over.data.current;
 
-    // 1. Column reordering
-    if (activeData?.type === 'column' && overData?.type === 'column') {
-      const oldIndex = categories.indexOf(activeData.category);
-      const newIndex = categories.indexOf(overData.category);
-      if (oldIndex !== -1 && newIndex !== -1) {
-        const reordered = arrayMove(categories, oldIndex, newIndex);
-        setCustomCategories(reordered);
+    // 1. Column reordering (can drop on column or over task inside column)
+    if (activeData?.type === 'column') {
+      const activeCat = activeData.category;
+      const overCat = overData?.category;
+      if (activeCat && overCat && activeCat !== overCat) {
+        const oldIndex = categories.indexOf(activeCat);
+        const newIndex = categories.indexOf(overCat);
+        if (oldIndex !== -1 && newIndex !== -1) {
+          const reordered = arrayMove(categories, oldIndex, newIndex);
+          setCustomCategories(reordered);
+        }
       }
     }
 
-    // 2. Task reordering within a column
-    if (activeData?.type === 'task' && overData?.type === 'task') {
+    // 2. Task reordering within a column or across columns
+    if (activeData?.type === 'task') {
       const activeCat = activeData.category;
-      const overCat = overData.category;
-      if (activeCat === overCat) {
+      const overCat = overData?.category;
+      const activeItemId = activeData.itemId;
+      const overItemId = overData?.itemId;
+
+      if (overItemId && activeCat === overCat) {
         const catItems = checklists
           .filter((c) => c.category.toUpperCase() === activeCat.toUpperCase())
           .sort((a, b) => a.order - b.order);
 
-        const oldIndex = catItems.findIndex((c) => c.id === activeData.itemId);
-        const newIndex = catItems.findIndex((c) => c.id === overData.itemId);
+        const oldIndex = catItems.findIndex((c) => c.id === activeItemId);
+        const newIndex = catItems.findIndex((c) => c.id === overItemId);
 
         if (oldIndex !== -1 && newIndex !== -1) {
-          const reordered = arrayMove(catItems, oldIndex, newIndex);
+          const reorderedCat = arrayMove(catItems, oldIndex, newIndex);
+          const otherItems = checklists.filter(
+            (c) => c.category.toUpperCase() !== activeCat.toUpperCase()
+          );
+          const newAllChecklists = [
+            ...otherItems,
+            ...reorderedCat.map((it, idx) => ({ ...it, order: idx })),
+          ];
+          onReorderItems?.(newAllChecklists);
           // Update order for reordered items
-          for (let i = 0; i < reordered.length; i++) {
-            const it = reordered[i];
+          for (let i = 0; i < reorderedCat.length; i++) {
+            const it = reorderedCat[i];
             if (it.order !== i) {
               api.updateChecklistItem(eventId, it.id, { order: i }).catch((err) => {
                 console.error('Failed to update task order:', err);
@@ -445,6 +484,11 @@ export const TopChecklistBar: React.FC<TopChecklistBarProps> = ({
             }
           }
         }
+      } else if (overCat && activeCat !== overCat) {
+        // Moved task to another category
+        api.updateChecklistItem(eventId, activeItemId, { category: overCat }).catch((err) => {
+          console.error('Failed to update task category:', err);
+        });
       }
     }
   };
@@ -867,7 +911,7 @@ export const TopChecklistBar: React.FC<TopChecklistBarProps> = ({
                 <button
                   type="button"
                   onClick={handleSaveCategoryModal}
-                  disabled={isNewCategoryModal && !modalCategoryName.trim()}
+                  disabled={!modalCategoryTitle.trim()}
                   className="px-5 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-500/20 disabled:opacity-50"
                 >
                   {isNewCategoryModal ? 'Create Category' : 'Apply Customization'}
@@ -990,18 +1034,6 @@ const SortableColumnCard: React.FC<SortableColumnCardProps> = ({
           {!isReadOnly && (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => {
-                  setActiveAddCategory(activeAddCategory === cat ? null : cat);
-                  setNewItemText('');
-                }}
-                className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 px-1 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
-                title={`Add item to ${cat}`}
-              >
-                <Plus className="w-3 h-3" />
-                <span>Add</span>
-              </button>
-
-              <button
                 onClick={() => handleStartCustomize(cat)}
                 className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-blue-500 opacity-0 group-hover/card:opacity-100 transition-opacity"
                 title="Customize header and color"
@@ -1015,6 +1047,18 @@ const SortableColumnCard: React.FC<SortableColumnCardProps> = ({
                 title="Delete category"
               >
                 <Trash2 className="w-3 h-3" />
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveAddCategory(activeAddCategory === cat ? null : cat);
+                  setNewItemText('');
+                }}
+                className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 px-1 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors ml-0.5"
+                title={`Add item to ${cat}`}
+              >
+                <Plus className="w-3 h-3" />
+                <span>Add</span>
               </button>
             </div>
           )}

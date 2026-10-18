@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
-import { SettingsProvider } from './context/SettingsContext';
+import { SettingsProvider, useSettings, normalizeTrackedBlockType } from './context/SettingsContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 import { Loader2 } from 'lucide-react';
@@ -18,9 +18,11 @@ import { TemplatesModal } from './components/TemplatesModal';
 import { VenuesModal } from './components/VenuesModal';
 import { api } from './services/api';
 import { EventItem, FullEventDetails, Priority, CanvasNodeItem } from './types';
+import { triggerAgendaRefresh } from './utils/agendaEvents';
 
 function EventSpaceApp() {
   const { logout } = useAuth();
+  const { trackBlocksInAgenda, trackSubtasksInAgenda, trackedBlockTypes } = useSettings();
   const [events, setEvents] = useState<EventItem[]>([]);
   const [activeEventId, setActiveEventId] = useState<string | null>(null);
   const [activeEvent, setActiveEvent] = useState<FullEventDetails | null>(null);
@@ -32,6 +34,7 @@ function EventSpaceApp() {
   const [isNewEventModalOpen, setIsNewEventModalOpen] = useState(false);
   const [isEditEventModalOpen, setIsEditEventModalOpen] = useState(false);
   const [isMasterTasksModalOpen, setIsMasterTasksModalOpen] = useState(false);
+  const [returnToAgendaOnSettingsClose, setReturnToAgendaOnSettingsClose] = useState(false);
   const [pendingTasksCount, setPendingTasksCount] = useState(0);
 
   // Filters from Clara's wireframe
@@ -45,6 +48,7 @@ function EventSpaceApp() {
   const [locatedNodeId, setLocatedNodeId] = useState<string | null>(null);
   const [locatedChecklistCategory, setLocatedChecklistCategory] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
   const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
   const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false);
@@ -96,20 +100,56 @@ function EventSpaceApp() {
     }
   }, []);
 
-  // Fetch master tasks count (strictly matching dated items in schedule/agenda)
+  // Fetch master tasks count (strictly matching filtered dated items in schedule/agenda)
   const loadMasterTasksCount = useCallback(async () => {
     try {
-      const res = await api.getMasterTasks(false);
-      setPendingTasksCount(res.totalAgendaDated ?? 0);
+      const res = await api.getMasterTasks(true);
+      let filteredCount = 0;
+      if (res?.taskNodes) {
+        for (const task of res.taskNodes) {
+          if (task.event?.status === 'archived') continue;
+          const blockType = normalizeTrackedBlockType(task.type);
+          if (!trackedBlockTypes.includes(blockType)) continue;
+          if (trackBlocksInAgenda && task.dueDate && !task.isCompleted) {
+            filteredCount++;
+          }
+          if (trackSubtasksInAgenda && !task.isCompleted && task.metadata) {
+            try {
+              const meta = JSON.parse(task.metadata);
+              if (Array.isArray(meta.subtasks)) {
+                for (const st of meta.subtasks) {
+                  if (st.dueDate && !st.done && st.style !== 'bullet') {
+                    filteredCount++;
+                  }
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+      setPendingTasksCount(filteredCount);
     } catch (err) {
       console.error('Failed to count master tasks:', err);
     }
-  }, []);
+  }, [trackBlocksInAgenda, trackSubtasksInAgenda, trackedBlockTypes]);
 
   useEffect(() => {
     loadEvents();
     loadMasterTasksCount();
   }, [loadEvents, loadMasterTasksCount]);
+
+  // Global agenda update listener
+  useEffect(() => {
+    const handleAgendaUpdate = () => {
+      loadMasterTasksCount();
+      loadEvents();
+      if (activeEventIdRef.current) {
+        loadActiveEventDetails(activeEventIdRef.current);
+      }
+    };
+    window.addEventListener('agenda-updated', handleAgendaUpdate);
+    return () => window.removeEventListener('agenda-updated', handleAgendaUpdate);
+  }, [loadMasterTasksCount, loadEvents, loadActiveEventDetails]);
 
   useEffect(() => {
     const handleHash = () => {
@@ -120,6 +160,12 @@ function EventSpaceApp() {
     };
     window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
+
+  useEffect(() => {
+    const handleOpenContacts = () => setIsContactsModalOpen(true);
+    window.addEventListener('eventspace:open-contacts', handleOpenContacts);
+    return () => window.removeEventListener('eventspace:open-contacts', handleOpenContacts);
   }, []);
 
   useEffect(() => {
@@ -214,7 +260,7 @@ function EventSpaceApp() {
     }
 
     try {
-      await api.updateEvent(id, { isMuted: newMuted });
+      await api.toggleEventMute(id, newMuted);
       loadMasterTasksCount();
     } catch (err) {
       console.error('Failed to toggle mute state:', err);
@@ -236,6 +282,7 @@ function EventSpaceApp() {
     try {
       await api.toggleChecklist(activeEvent.id, id, isCompleted);
       loadMasterTasksCount();
+      triggerAgendaRefresh();
     } catch (err) {
       console.error('Failed to toggle checklist:', err);
       loadActiveEventDetails(activeEvent.id);
@@ -255,6 +302,7 @@ function EventSpaceApp() {
         prev ? { ...prev, checklists: [...prev.checklists, created] } : prev
       );
       loadMasterTasksCount();
+      triggerAgendaRefresh();
     } catch (err) {
       console.error('Failed to create checklist item:', err);
     }
@@ -275,6 +323,7 @@ function EventSpaceApp() {
             }
           : prev
       );
+      triggerAgendaRefresh();
     } catch (err) {
       console.error('Failed to update checklist item:', err);
     }
@@ -294,6 +343,7 @@ function EventSpaceApp() {
           : prev
       );
       loadMasterTasksCount();
+      triggerAgendaRefresh();
     } catch (err) {
       console.error('Failed to delete checklist item:', err);
     }
@@ -305,6 +355,9 @@ function EventSpaceApp() {
     department?: string | null;
     startDate?: string | null;
     endDate?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    color?: string | null;
     priority?: Priority | null;
     contactIds?: string[];
   }) => {
@@ -321,6 +374,9 @@ function EventSpaceApp() {
       department?: string;
       startDate?: string;
       endDate?: string;
+      startTime?: string;
+      endTime?: string;
+      color?: string;
       priority?: Priority | null;
     }
   ) => {
@@ -396,10 +452,6 @@ function EventSpaceApp() {
   const isSidebarCollapsed = sidebarWidth < 160;
 
   const handleToggleSidebar = () => {
-    if (window.innerWidth < 1024) {
-      setSidebarOpen(!sidebarOpen);
-      return;
-    }
     if (isSidebarCollapsed) {
       const prev = parseInt(localStorage.getItem('eventspace_prev_sidebar_width') || '288', 10);
       const newW = prev >= 160 ? prev : 288;
@@ -409,6 +461,16 @@ function EventSpaceApp() {
       localStorage.setItem('eventspace_prev_sidebar_width', String(sidebarWidth));
       setSidebarWidth(72);
       localStorage.setItem('eventspace_sidebar_width', '72');
+    }
+  };
+
+  // Reorder events handler
+  const handleReorderEvents = async (orderedIds: string[]) => {
+    try {
+      await api.reorderEvents(orderedIds);
+      await loadEvents();
+    } catch (err) {
+      console.error('Failed to reorder events:', err);
     }
   };
 
@@ -433,6 +495,7 @@ function EventSpaceApp() {
         onOpenVenues={() => setIsVenuesModalOpen(true)}
         onLogout={logout}
         onToggleCompleteEvent={handleToggleCompleteEvent}
+        onReorderEvents={handleReorderEvents}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         selectedYear={selectedYear}
@@ -456,6 +519,7 @@ function EventSpaceApp() {
           onOpenMasterTasks={() => setIsMasterTasksModalOpen(true)}
           onOpenNewEvent={() => setIsNewEventModalOpen(true)}
           onOpenEditEvent={() => setIsEditEventModalOpen(true)}
+          onLeaveEvent={handleLeaveEvent}
           onRefreshWorkspace={handleRefreshWorkspace}
           pendingTasksCount={pendingTasksCount}
           isReadOnly={isReadOnly}
@@ -471,6 +535,9 @@ function EventSpaceApp() {
             onAddItem={handleAddChecklistItem}
             onUpdateItem={handleUpdateChecklistItem}
             onDeleteItem={handleDeleteChecklistItem}
+            onReorderItems={(reordered) =>
+              setActiveEvent((prev) => (prev ? { ...prev, checklists: reordered } : prev))
+            }
             isReadOnly={isReadOnly}
           />
         )}
@@ -515,12 +582,26 @@ function EventSpaceApp() {
           loadMasterTasksCount();
           if (activeEventId) loadActiveEventDetails(activeEventId);
         }}
+        onOpenSettings={(section) => {
+          setReturnToAgendaOnSettingsClose(true);
+          setIsMasterTasksModalOpen(false);
+          setSettingsInitialSection(section || 'agenda');
+          setIsSettingsModalOpen(true);
+        }}
       />
 
       <SettingsModal
         isOpen={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
+        onClose={() => {
+          setIsSettingsModalOpen(false);
+          setSettingsInitialSection(undefined);
+          if (returnToAgendaOnSettingsClose) {
+            setIsMasterTasksModalOpen(true);
+            setReturnToAgendaOnSettingsClose(false);
+          }
+        }}
         onOpenTemplates={() => setIsTemplatesModalOpen(true)}
+        initialSection={settingsInitialSection}
       />
 
       <TrashBinModal

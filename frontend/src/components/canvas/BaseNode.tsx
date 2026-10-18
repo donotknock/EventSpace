@@ -16,6 +16,7 @@ import {
   GripVertical,
   Copy,
   Table,
+  Star,
 } from 'lucide-react';
 import {
   DndContext,
@@ -35,8 +36,11 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { CanvasNodeItem } from '../../types';
 import { useSettings } from '../../context/SettingsContext';
+import { formatMonthDay } from '../../utils/date';
 import { AutoLinkText } from '../../utils/linkify';
 import { ContentWithTables, parseSpreadsheetToMarkdown } from '../../utils/markdownTable';
+import { CustomDatePicker } from '../CustomDatePicker';
+import { triggerAgendaRefresh } from '../../utils/agendaEvents';
 
 interface BaseNodeProps {
   id: string;
@@ -110,6 +114,8 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
     enableBulletSubtasks,
     enableCircleSubtasks,
     enableSquareSubtasks,
+    checkboxStyles,
+    bulletStyles,
   } = useSettings();
 
   // Title editing state
@@ -126,22 +132,20 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
   );
 
   // Subtask editing & creation state
-  const defaultSubtaskStyle: 'bullet' | 'circle' | 'square' = enableCircleSubtasks
+  const defaultSubtaskStyle: string = checkboxStyles.includes('circle')
     ? 'circle'
-    : enableSquareSubtasks
+    : checkboxStyles.includes('square')
     ? 'square'
-    : enableBulletSubtasks
-    ? 'bullet'
-    : 'circle';
+    : bulletStyles[0] || 'circle';
 
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editingSubtaskText, setEditingSubtaskText] = useState('');
   const [editingSubtaskDueDate, setEditingSubtaskDueDate] = useState('');
-  const [editingSubtaskStyle, setEditingSubtaskStyle] = useState<'bullet' | 'circle' | 'square'>(defaultSubtaskStyle);
+  const [editingSubtaskStyle, setEditingSubtaskStyle] = useState<string>(defaultSubtaskStyle);
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [newSubtaskText, setNewSubtaskText] = useState('');
   const [newSubtaskDueDate, setNewSubtaskDueDate] = useState('');
-  const [newSubtaskStyle, setNewSubtaskStyle] = useState<'bullet' | 'circle' | 'square'>(defaultSubtaskStyle);
+  const [newSubtaskStyle, setNewSubtaskStyle] = useState<string>(defaultSubtaskStyle);
 
   // Sync state with incoming props
   useEffect(() => {
@@ -158,7 +162,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
       label: string;
       done: boolean;
       dueDate?: string | null;
-      style?: 'bullet' | 'circle' | 'square';
+      style?: 'bullet' | 'circle' | 'square' | 'dot' | 'dash' | 'arrow' | 'starred' | string;
     }[];
   } = {};
   if (node.metadata) {
@@ -197,6 +201,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
     );
     const newMetadata = JSON.stringify({ ...metadataObj, subtasks: updatedSubtasks });
     onUpdate(id, { metadata: newMetadata });
+    triggerAgendaRefresh();
   };
 
   // Subtask drag sensors & reorder handler
@@ -226,18 +231,18 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
   const handleCycleSubtaskStyle = (subtaskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!metadataObj.subtasks) return;
-    const activeStyles: Array<'circle' | 'square' | 'bullet'> = [];
-    if (enableCircleSubtasks) activeStyles.push('circle');
-    if (enableSquareSubtasks) activeStyles.push('square');
-    if (enableBulletSubtasks) activeStyles.push('bullet');
+    const activeStyles: string[] = [
+      ...(checkboxStyles || []),
+      ...(bulletStyles || []),
+    ];
     if (activeStyles.length <= 1) return;
 
     const updated = metadataObj.subtasks.map((st) => {
       if (st.id === subtaskId) {
-        const currentStyle = (st.style as 'circle' | 'square' | 'bullet') || 'circle';
+        const currentStyle = st.style || (checkboxStyles[0] || 'circle');
         const currentIndex = activeStyles.indexOf(currentStyle);
         const nextStyle = activeStyles[(currentIndex + 1) % activeStyles.length] || activeStyles[0];
-        return { ...st, style: nextStyle };
+        return { ...st, style: nextStyle as any };
       }
       return st;
     });
@@ -254,30 +259,31 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
         label: newSubtaskText.trim(),
         done: false,
         dueDate: newSubtaskDueDate ? new Date(newSubtaskDueDate).toISOString() : null,
-        style: newSubtaskStyle,
+        style: newSubtaskStyle as any,
       },
     ];
     onUpdate(id, { metadata: JSON.stringify({ ...metadataObj, subtasks: updated }) });
     setNewSubtaskText('');
     setNewSubtaskDueDate('');
     setIsAddingSubtask(false);
+    triggerAgendaRefresh();
   };
 
   const handleStartEditSubtask = (st: {
     id: string;
     label: string;
     dueDate?: string | null;
-    style?: 'bullet' | 'circle' | 'square';
+    style?: string;
   }) => {
     setEditingSubtaskId(st.id);
     setEditingSubtaskText(st.label);
     setEditingSubtaskDueDate(st.dueDate ? new Date(st.dueDate).toISOString().slice(0, 10) : '');
-    setEditingSubtaskStyle(st.style || 'circle');
+    setEditingSubtaskStyle(st.style || defaultSubtaskStyle);
   };
 
   const handleSaveSubtaskLabel = (subtaskId: string) => {
     if (!metadataObj.subtasks) return;
-    const isBullet = editingSubtaskStyle === 'bullet';
+    const isBullet = ['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(editingSubtaskStyle);
     const updated = metadataObj.subtasks.map((st) =>
       st.id === subtaskId
         ? {
@@ -285,18 +291,20 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
             label: editingSubtaskText.trim() || st.label,
             done: isBullet ? false : st.done,
             dueDate: editingSubtaskDueDate ? new Date(editingSubtaskDueDate).toISOString() : null,
-            style: editingSubtaskStyle,
+            style: editingSubtaskStyle as any,
           }
         : st
     );
     onUpdate(id, { metadata: JSON.stringify({ ...metadataObj, subtasks: updated }) });
     setEditingSubtaskId(null);
+    triggerAgendaRefresh();
   };
 
   const handleDeleteSubtask = (subtaskId: string) => {
     if (!metadataObj.subtasks) return;
     const updated = metadataObj.subtasks.filter((st) => st.id !== subtaskId);
     onUpdate(id, { metadata: JSON.stringify({ ...metadataObj, subtasks: updated }) });
+    triggerAgendaRefresh();
   };
 
   const handleSubtaskDateChange = (subtaskId: string, newDate: string | null) => {
@@ -305,14 +313,10 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
       st.id === subtaskId ? { ...st, dueDate: newDate } : st
     );
     onUpdate(id, { metadata: JSON.stringify({ ...metadataObj, subtasks: updated }) });
+    triggerAgendaRefresh();
   };
 
-  const formattedDate = node.dueDate
-    ? new Date(node.dueDate).toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-      })
-    : null;
+  const formattedDate = node.dueDate ? formatMonthDay(node.dueDate) : null;
 
   const handleColor = useMemo(() => {
     switch (node.type) {
@@ -330,11 +334,13 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
     }
   }, [node.type]);
 
-  const handleBaseClasses = isReadOnly
-    ? '!hidden'
-    : `!w-3.5 !h-3.5 ${handleColor} !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 ${
-        selected ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
-      }`;
+  const handleBaseClasses = `!w-3.5 !h-3.5 ${handleColor} !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 -translate-x-1/2 -translate-y-1/2 ${
+    isReadOnly
+      ? '!pointer-events-none !opacity-0'
+      : selected
+      ? '!opacity-100'
+      : 'opacity-0 group-hover:opacity-100'
+  }`;
 
   const resizerLineColor =
     node.type === 'chaser'
@@ -390,61 +396,93 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
         }}
       />
 
-      {/* Exactly 1 Handle per side: Top (target), Left (target), Right (source), Bottom (source) */}
+      {/* 4 Cardinal Handles: Top, Right, Bottom, Left (Omnidirectional in loose mode) */}
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="top"
+        isConnectable={!isReadOnly}
+        className={handleBaseClasses}
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
       <Handle
         type="target"
         position={Position.Top}
         id="top-target"
         isConnectable={!isReadOnly}
-        className={handleBaseClasses}
-        style={{ left: '50%' }}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
-        type="target"
-        position={Position.Left}
-        id="left-target"
+        type="source"
+        position={Position.Right}
+        id="right"
         isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="right-source"
         isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="bottom"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="bottom-source"
         isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="left"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ left: '50%' }}
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="left-target"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
       />
 
       {/* Node Header */}
       <div className="p-3 border-b border-slate-100 dark:border-slate-800 rounded-t-2xl flex items-center justify-between gap-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <button
-            type="button"
-            disabled={isReadOnly}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!isReadOnly) onUpdate(id, { isCompleted: !node.isCompleted });
-            }}
-            className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
-              node.isCompleted
-                ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
-                : isReadOnly
-                ? 'text-slate-300 dark:text-slate-700 cursor-default'
-                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-            title={isReadOnly ? (node.isCompleted ? 'Completed' : 'Pending') : node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
-          >
-            {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUpdate(id, { isCompleted: !node.isCompleted });
+                triggerAgendaRefresh();
+              }}
+              className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
+                node.isCompleted
+                  ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
+            >
+              {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+            </button>
+          )}
           <div className="flex-shrink-0 text-slate-600 dark:text-slate-300">
             {icon}
           </div>
@@ -455,116 +493,71 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
           </span>
         </div>
 
-        {/* Right side of header: Direct Native Date Tag and Delete button */}
-        <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
-          {/* Direct Native Date Picker Badge (No intermediate popup) */}
-          <div
-            className="relative inline-flex items-center nodrag nopan"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            {formattedDate ? (
-              <div
+        {/* Right side controls: 1. Duplicate & Delete (hover only), 2. Date (conditional visibility) */}
+        <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+          {/* Action buttons inside hover-only wrapper */}
+          <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150">
+            {/* 1. Duplicate button */}
+            {!isReadOnly && onDuplicate && (
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                  if (input) {
-                    try {
-                      input.showPicker();
-                    } catch {
-                      input.focus();
-                    }
-                  }
+                  onDuplicate(id);
                 }}
-                className="relative flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 transition-all cursor-pointer"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/50 transition-all"
+                title="Duplicate block"
               >
-                <Calendar className="w-3 h-3 flex-shrink-0" />
-                <span>{formattedDate}</span>
-                <input
-                  type="date"
-                  value={dateValue}
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                  title="Click to change date"
-                />
-                {!isReadOnly && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleDateChange('');
-                    }}
-                    className="relative z-20 ml-0.5 p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
-                    title="Clear date"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                )}
-              </div>
-            ) : !isReadOnly ? (
-              <div
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* 2. Delete button */}
+            {!isReadOnly && (
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                  if (input) {
-                    try {
-                      input.showPicker();
-                    } catch {
-                      input.focus();
-                    }
-                  }
+                  onDelete(id);
                 }}
-                className="relative flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-dashed border-slate-300 dark:border-slate-700 cursor-pointer"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
+                title="Delete node"
               >
-                <Calendar className="w-2.5 h-2.5 flex-shrink-0" />
-                <span>+ Date</span>
-                <input
-                  type="date"
-                  value=""
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                  title="Click to set due date"
-                />
-              </div>
-            ) : null}
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          {/* Duplicate button */}
-          {!isReadOnly && onDuplicate && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDuplicate(id);
-              }}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/50 transition-all"
-              title="Duplicate block"
-            >
-              <Copy className="w-3.5 h-3.5" />
-            </button>
-          )}
-
-          {/* Delete button */}
-          {!isReadOnly && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(id);
-              }}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
-              title="Delete node"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
+          {/* 3. Date picker badge at far right */}
+          <div
+            className={`nodrag nopan order-last ${
+              dateValue
+                ? 'opacity-100 pointer-events-auto'
+                : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-150'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <CustomDatePicker
+              value={dateValue}
+              onChange={(newDate) => handleDateChange(newDate || '')}
+              placeholder="+ Date"
+              size="sm"
+              align="right"
+              disabled={isReadOnly}
+              buttonClassName={
+                dateValue
+                  ? 'h-6 px-2 text-[11px] font-bold rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                  : 'h-6 px-1.5 text-[10px] font-semibold rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-700'
+              }
+            />
+          </div>
         </div>
       </div>
 
       {/* Node Body with internal scrollable container */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-2.5 nodrag">
+      <div
+        className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-2.5 nodrag nowheel"
+        onWheel={(e) => e.stopPropagation()}
+      >
         {/* Title row */}
         {isEditingTitle ? (
           <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -602,7 +595,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
               }}
               className={`text-lg font-semibold ${
                 isReadOnly ? 'cursor-default' : 'cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'
-              } transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+              } transition-colors leading-snug break-words min-w-0 ${
                 node.isCompleted
                   ? 'line-through text-slate-400 dark:text-slate-500'
                   : 'text-slate-900 dark:text-slate-100'
@@ -645,6 +638,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
               rows={4}
               value={contentText}
               onChange={(e) => setContentText(e.target.value)}
+              onWheel={(e) => e.stopPropagation()}
               onPaste={(e) => {
                 if (isReadOnly) return;
                 const text = e.clipboardData.getData('text/plain') || e.clipboardData.getData('text');
@@ -667,7 +661,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                 if (e.key === 'Escape') setIsEditingContent(false);
               }}
               placeholder="Enter node notes, details, briefing, or paste Excel/Sheets table..."
-              className="w-full text-xs p-2 rounded-xl border border-blue-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none leading-relaxed font-sans"
+              className="w-full text-xs p-2 rounded-xl border border-blue-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none leading-relaxed font-sans nodrag nowheel"
             />
             <div className="flex justify-end gap-1.5">
               <button
@@ -689,7 +683,7 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
             onDoubleClick={() => {
               if (!isReadOnly) setIsEditingContent(true);
             }}
-            className={`group/content relative text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 bg-slate-50/70 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800/60 font-sans text-[11px] ${
+            className={`group/content relative text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap break-words min-w-0 bg-slate-50/70 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800/60 font-sans text-[11px] ${
               isReadOnly ? 'cursor-default' : 'cursor-pointer hover:border-blue-300 dark:hover:border-blue-700/60'
             } transition-colors`}
             title={isReadOnly ? undefined : 'Double-click to edit content'}
@@ -769,61 +763,104 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                     />
                     <div className="flex items-center justify-between gap-1 flex-wrap">
                       {/* Style selector for editing (Only actively enabled options) */}
-                      {(enableCircleSubtasks || enableSquareSubtasks || enableBulletSubtasks) && (
-                        <div className="flex items-center gap-1">
-                          {enableCircleSubtasks && (
-                            <button
-                              type="button"
-                              onClick={() => setEditingSubtaskStyle('circle')}
-                              className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
-                                editingSubtaskStyle === 'circle'
-                                  ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
-                                  : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                              }`}
-                              title="Circle Checkbox"
-                            >
-                              <Circle className="w-2.5 h-2.5" /> Circle
-                            </button>
-                          )}
-                          {enableSquareSubtasks && (
-                            <button
-                              type="button"
-                              onClick={() => setEditingSubtaskStyle('square')}
-                              className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
-                                editingSubtaskStyle === 'square'
-                                  ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
-                                  : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                              }`}
-                              title="Square Checkbox"
-                            >
-                              <Square className="w-2.5 h-2.5" /> Square
-                            </button>
-                          )}
-                          {enableBulletSubtasks && (
-                            <button
-                              type="button"
-                              onClick={() => setEditingSubtaskStyle('bullet')}
-                              className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
-                                editingSubtaskStyle === 'bullet'
-                                  ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
-                                  : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                              }`}
-                              title="Bullet Point"
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-current" /> Bullet
-                            </button>
-                          )}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {checkboxStyles?.includes('circle') && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingSubtaskStyle('circle')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                              editingSubtaskStyle === 'circle'
+                                ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                                : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                            title="Circle Checkbox"
+                          >
+                            <Circle className="w-2.5 h-2.5" /> Circle
+                          </button>
+                        )}
+                        {checkboxStyles?.includes('square') && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingSubtaskStyle('square')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                              editingSubtaskStyle === 'square'
+                                ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                                : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                            title="Square Checkbox"
+                          >
+                            <Square className="w-2.5 h-2.5" /> Square
+                          </button>
+                        )}
+                        {bulletStyles?.includes('dot') && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingSubtaskStyle('dot')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                              editingSubtaskStyle === 'dot' || editingSubtaskStyle === 'bullet'
+                                ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                                : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                            title="Bullet Dot"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-current" /> Dot
+                          </button>
+                        )}
+                        {bulletStyles?.includes('dash') && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingSubtaskStyle('dash')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                              editingSubtaskStyle === 'dash'
+                                ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                                : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                            title="Dash"
+                          >
+                            <span className="font-bold text-xs leading-none">-</span> Dash
+                          </button>
+                        )}
+                        {bulletStyles?.includes('arrow') && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingSubtaskStyle('arrow')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                              editingSubtaskStyle === 'arrow'
+                                ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                                : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                            title="Arrow"
+                          >
+                            <span className="text-xs leading-none">→</span> Arrow
+                          </button>
+                        )}
+                        {bulletStyles?.includes('starred') && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingSubtaskStyle('starred')}
+                            className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                              editingSubtaskStyle === 'starred'
+                                ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                                : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                            title="Starred"
+                          >
+                            <Star className="w-2.5 h-2.5 fill-current" /> Starred
+                          </button>
+                        )}
+                      </div>
 
                       <div className="flex items-center gap-1 ml-auto">
-                        <div className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-slate-400" />
-                          <input
-                            type="date"
+                        <div
+                          className="nodrag nopan"
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <CustomDatePicker
                             value={editingSubtaskDueDate}
-                            onChange={(e) => setEditingSubtaskDueDate(e.target.value)}
-                            className="text-[10px] px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
+                            onChange={(val) => setEditingSubtaskDueDate(val || '')}
+                            placeholder="+ Date"
+                            size="sm"
                           />
                         </div>
                         <button
@@ -845,151 +882,154 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
                   </div>
                 ) : (
                   <>
-                  {(() => {
-                    let effectiveStyle: 'bullet' | 'circle' | 'square' = st.style || 'circle';
-                    if (effectiveStyle === 'bullet' && !enableBulletSubtasks) {
-                      effectiveStyle = enableCircleSubtasks ? 'circle' : enableSquareSubtasks ? 'square' : 'circle';
-                    } else if (effectiveStyle === 'square' && !enableSquareSubtasks) {
-                      effectiveStyle = enableCircleSubtasks ? 'circle' : enableBulletSubtasks ? 'bullet' : 'circle';
-                    } else if (effectiveStyle === 'circle' && !enableCircleSubtasks) {
-                      effectiveStyle = enableSquareSubtasks ? 'square' : enableBulletSubtasks ? 'bullet' : 'square';
-                    }
+                    {(() => {
+                      const isBullet = ['bullet', 'dot', 'dash', 'arrow', 'starred'].includes(st.style || '');
+                      if (isBullet) {
+                        let bulletIcon = (
+                          <div className="w-4 h-[20px] flex items-center justify-center shrink-0">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500" />
+                          </div>
+                        );
+                        if (st.style === 'starred') {
+                          bulletIcon = (
+                            <div className="w-4 h-[20px] flex items-center justify-center shrink-0">
+                              <Star className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 fill-current" />
+                            </div>
+                          );
+                        } else if (st.style === 'dash') {
+                          bulletIcon = (
+                            <div className="w-4 h-[20px] flex items-center justify-center shrink-0 font-bold text-slate-400 dark:text-slate-500 text-xs select-none">
+                              -
+                            </div>
+                          );
+                        } else if (st.style === 'arrow') {
+                          bulletIcon = (
+                            <div className="w-4 h-[20px] flex items-center justify-center shrink-0 font-bold text-slate-400 dark:text-slate-500 text-xs select-none">
+                              →
+                            </div>
+                          );
+                        }
 
-                    return effectiveStyle === 'bullet' ? (
-                      <div className="flex items-start gap-2 text-left min-w-0 flex-1 text-xs">
-                        <div className="w-3.5 h-3.5 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500" />
-                        </div>
-                        <span
-                          onDoubleClick={(e) => {
+                        return (
+                          <div className="flex items-start gap-1.5 text-left min-w-0 flex-1 text-xs">
+                            {bulletIcon}
+                            <span
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                if (!isReadOnly) handleStartEditSubtask(st);
+                              }}
+                              className={`text-slate-700 dark:text-slate-300 font-normal break-words min-w-0 whitespace-pre-wrap flex-1 leading-[20px] ${
+                                isReadOnly ? 'cursor-default' : ''
+                              }`}
+                              title={isReadOnly ? undefined : 'Double-click to edit note'}
+                            >
+                              <AutoLinkText text={st.label} />
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      const isSquare = st.style === 'square';
+                      return (
+                        <button
+                          disabled={isReadOnly}
+                          onClick={(e) => {
                             e.stopPropagation();
-                            if (!isReadOnly) handleStartEditSubtask(st);
+                            if (!isReadOnly) toggleSubtask(st.id);
                           }}
-                          className={`text-slate-700 dark:text-slate-300 font-normal break-all [overflow-wrap:anywhere] min-w-0 whitespace-pre-wrap flex-1 ${
+                          className={`flex items-start gap-1.5 text-left min-w-0 flex-1 text-xs ${
                             isReadOnly ? 'cursor-default' : ''
                           }`}
-                          title={isReadOnly ? undefined : 'Double-click to edit note'}
                         >
-                          <AutoLinkText text={st.label} />
-                        </span>
-                      </div>
-                    ) : (
-                      <button
-                        disabled={isReadOnly}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!isReadOnly) toggleSubtask(st.id);
-                        }}
-                        className={`flex items-start gap-2 text-left min-w-0 flex-1 text-xs ${
-                          isReadOnly ? 'cursor-default' : ''
-                        }`}
-                      >
-                        {effectiveStyle === 'square' ? (
-                          st.done ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
-                          ) : (
-                            <Square className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
-                          )
-                        ) : st.done ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
-                        ) : (
-                          <Circle className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                          <div className="w-4 h-[20px] flex items-center justify-center shrink-0">
+                            {isSquare ? (
+                              st.done ? (
+                                <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <Square className="w-3.5 h-3.5 text-slate-400" />
+                              )
+                            ) : st.done ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : (
+                              <Circle className="w-3.5 h-3.5 text-slate-400" />
+                            )}
+                          </div>
+                          <span
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              if (!isReadOnly) handleStartEditSubtask(st);
+                            }}
+                            className={`break-words min-w-0 whitespace-pre-wrap flex-1 leading-[20px] ${
+                              st.done
+                                ? 'line-through text-slate-400 dark:text-slate-500'
+                                : 'text-slate-700 dark:text-slate-300'
+                            } ${isReadOnly ? 'cursor-default' : ''}`}
+                            title={isReadOnly ? undefined : 'Double-click to edit'}
+                          >
+                            <AutoLinkText text={st.label} />
+                          </span>
+                        </button>
+                      );
+                    })()}
+
+                    {/* Subtask Right Actions Order: 1. Edit Subtask, 2. Delete Subtask, 3. Date */}
+                    <div className="flex items-center gap-1 flex-shrink-0 ml-auto nodrag nopan">
+                      {/* Action buttons: Edit Subtask & Delete Subtask in hover-only wrapper */}
+                      <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover/st:opacity-100 group-hover/st:pointer-events-auto transition-opacity duration-150">
+                        {/* 1. Edit Subtask */}
+                        {!isReadOnly && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartEditSubtask(st);
+                            }}
+                            className="p-1 text-slate-400 hover:text-blue-500 transition-colors"
+                            title="Edit subtask"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
                         )}
-                        <span
-                          onDoubleClick={(e) => {
-                            e.stopPropagation();
-                            if (!isReadOnly) handleStartEditSubtask(st);
-                          }}
-                          className={`break-all [overflow-wrap:anywhere] min-w-0 whitespace-pre-wrap flex-1 ${
-                            st.done
-                              ? 'line-through text-slate-400 dark:text-slate-500'
-                              : 'text-slate-700 dark:text-slate-300'
-                          } ${isReadOnly ? 'cursor-default' : ''}`}
-                          title={isReadOnly ? undefined : 'Double-click to edit'}
-                        >
-                          <AutoLinkText text={st.label} />
-                        </span>
-                      </button>
-                    );
-                  })()}
 
-                    {/* HTML5 Date Picker for subtask - Right-aligned */}
-                    <div
-                      className="flex items-center gap-1 flex-shrink-0 ml-auto nodrag nopan"
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onPointerDown={(e) => e.stopPropagation()}
-                    >
-                      <label
-                        className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-all border ${
-                          isReadOnly
-                            ? 'cursor-default'
-                            : 'cursor-pointer'
-                        } ${
-                          st.dueDate
-                            ? 'font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800'
-                            : 'text-slate-400 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-400 opacity-60 hover:opacity-100'
-                        }`}
-                        title={isReadOnly ? 'Due date' : 'Sub-task due date'}
-                      >
-                        <Calendar className="w-2.5 h-2.5 flex-shrink-0" />
-                        <input
-                          type="date"
-                          disabled={isReadOnly}
-                          value={st.dueDate ? new Date(st.dueDate).toISOString().slice(0, 10) : ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            handleSubtaskDateChange(st.id, val ? new Date(val).toISOString() : null);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          className={`bg-transparent text-[10px] p-0 border-0 outline-none w-auto font-inherit text-inherit nodrag nopan ${
-                            isReadOnly ? 'cursor-default pointer-events-none' : 'cursor-pointer'
-                          }`}
-                          title={isReadOnly ? 'Due date' : 'Sub-task due date'}
-                        />
-                      </label>
-                      {!isReadOnly && st.dueDate && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            handleSubtaskDateChange(st.id, null);
-                          }}
-                          className="p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
-                          title="Clear subtask date"
-                        >
-                          <X className="w-2.5 h-2.5" />
-                        </button>
-                      )}
-                    </div>
-
-                    {!isReadOnly && (
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover/st:opacity-100 transition-opacity">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStartEditSubtask(st);
-                          }}
-                          className="p-1 text-slate-400 hover:text-blue-500"
-                          title="Edit subtask"
-                        >
-                          <Edit3 className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteSubtask(st.id);
-                          }}
-                          className="p-1 text-slate-400 hover:text-red-500"
-                          title="Delete subtask"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                        {/* 2. Delete Subtask */}
+                        {!isReadOnly && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteSubtask(st.id);
+                            }}
+                            className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                            title="Delete subtask"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
-                    )}
+
+                      {/* 3. Date picker badge at far right */}
+                      <div
+                        className={`order-last ${
+                          st.dueDate
+                            ? 'opacity-100 pointer-events-auto'
+                            : 'opacity-0 pointer-events-none group-hover/st:opacity-100 group-hover/st:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-150'
+                        }`}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        <CustomDatePicker
+                          value={st.dueDate ? new Date(st.dueDate).toISOString().slice(0, 10) : null}
+                          onChange={(val) => handleSubtaskDateChange(st.id, val ? new Date(val).toISOString() : null)}
+                          placeholder="+ Date"
+                          size="sm"
+                          align="right"
+                          disabled={isReadOnly}
+                          buttonClassName={
+                            st.dueDate
+                              ? 'h-5 px-1.5 text-[10px] font-bold rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                              : 'h-5 px-1 text-[9px] text-slate-400 dark:text-slate-500 border border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-400'
+                          }
+                        />
+                      </div>
+                    </div>
                   </>
                 )}
               </SortableSubtaskRow>
@@ -1017,62 +1057,104 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
               />
               <div className="flex items-center justify-between gap-1 flex-wrap">
                 {/* Style selector for adding subtask (Only actively enabled options) */}
-                {(enableCircleSubtasks || enableSquareSubtasks || enableBulletSubtasks) && (
-                  <div className="flex items-center gap-1">
-                    {enableCircleSubtasks && (
-                      <button
-                        type="button"
-                        onClick={() => setNewSubtaskStyle('circle')}
-                        className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
-                          newSubtaskStyle === 'circle'
-                            ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
-                            : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                        }`}
-                        title="Circle Checkbox"
-                      >
-                        <Circle className="w-2.5 h-2.5" /> Circle
-                      </button>
-                    )}
-                    {enableSquareSubtasks && (
-                      <button
-                        type="button"
-                        onClick={() => setNewSubtaskStyle('square')}
-                        className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
-                          newSubtaskStyle === 'square'
-                            ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
-                            : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                        }`}
-                        title="Square Checkbox"
-                      >
-                        <Square className="w-2.5 h-2.5" /> Square
-                      </button>
-                    )}
-                    {enableBulletSubtasks && (
-                      <button
-                        type="button"
-                        onClick={() => setNewSubtaskStyle('bullet')}
-                        className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
-                          newSubtaskStyle === 'bullet'
-                            ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
-                            : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                        }`}
-                        title="Bullet Point"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-current" /> Bullet
-                      </button>
-                    )}
-                  </div>
-                )}
+                <div className="flex items-center gap-1 flex-wrap">
+                  {checkboxStyles?.includes('circle') && (
+                    <button
+                      type="button"
+                      onClick={() => setNewSubtaskStyle('circle')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                        newSubtaskStyle === 'circle'
+                          ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                      title="Circle Checkbox"
+                    >
+                      <Circle className="w-2.5 h-2.5" /> Circle
+                    </button>
+                  )}
+                  {checkboxStyles?.includes('square') && (
+                    <button
+                      type="button"
+                      onClick={() => setNewSubtaskStyle('square')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                        newSubtaskStyle === 'square'
+                          ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                      title="Square Checkbox"
+                    >
+                      <Square className="w-2.5 h-2.5" /> Square
+                    </button>
+                  )}
+                  {bulletStyles?.includes('dot') && (
+                    <button
+                      type="button"
+                      onClick={() => setNewSubtaskStyle('dot')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                        newSubtaskStyle === 'dot' || newSubtaskStyle === 'bullet'
+                          ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                      title="Bullet Dot"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-current" /> Dot
+                    </button>
+                  )}
+                  {bulletStyles?.includes('dash') && (
+                    <button
+                      type="button"
+                      onClick={() => setNewSubtaskStyle('dash')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                        newSubtaskStyle === 'dash'
+                          ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                      title="Dash"
+                    >
+                      <span className="font-bold text-xs leading-none">-</span> Dash
+                    </button>
+                  )}
+                  {bulletStyles?.includes('arrow') && (
+                    <button
+                      type="button"
+                      onClick={() => setNewSubtaskStyle('arrow')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                        newSubtaskStyle === 'arrow'
+                          ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                      title="Arrow"
+                    >
+                      <span className="text-xs leading-none">→</span> Arrow
+                    </button>
+                  )}
+                  {bulletStyles?.includes('starred') && (
+                    <button
+                      type="button"
+                      onClick={() => setNewSubtaskStyle('starred')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 ${
+                        newSubtaskStyle === 'starred'
+                          ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                      title="Starred"
+                    >
+                      <Star className="w-2.5 h-2.5 fill-current" /> Starred
+                    </button>
+                  )}
+                </div>
 
                 <div className="flex items-center gap-1 ml-auto">
-                  <div className="flex items-center gap-1">
-                    <Calendar className="w-3 h-3 text-slate-400" />
-                    <input
-                      type="date"
+                  <div
+                    className="nodrag nopan"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <CustomDatePicker
                       value={newSubtaskDueDate}
-                      onChange={(e) => setNewSubtaskDueDate(e.target.value)}
-                      title="Optional sub-task due date"
-                      className="text-[10px] px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
+                      onChange={(val) => setNewSubtaskDueDate(val || '')}
+                      placeholder="+ Date"
+                      size="sm"
                     />
                   </div>
                   <button

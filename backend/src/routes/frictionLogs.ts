@@ -32,10 +32,28 @@ frictionLogsRouter.get('/', async (req: Request, res: Response) => {
   }
 });
 
+async function checkEventEditAccess(eventId: string, userId: string, workspaceId?: string) {
+  return prisma.event.findFirst({
+    where: {
+      id: eventId,
+      deletedAt: null,
+      OR: [
+        { workspaceId },
+        { shares: { some: { userId, role: 'editor' } } },
+      ],
+    },
+  });
+}
+
 // POST /api/events/:eventId/friction-logs
 frictionLogsRouter.post('/', async (req: Request, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot create friction logs' });
+    }
+
     const parsed = frictionLogSchema.parse(req.body);
 
     const log = await prisma.frictionLog.create({
@@ -58,10 +76,26 @@ frictionLogsRouter.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// PUT /api/events/:eventId/friction-logs/:id
+// PUT /api/events/:eventId/friction-logs/:id or /api/friction-logs/:id
 frictionLogsRouter.put('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    let eventId = req.params.eventId as string;
+    if (!eventId) {
+      const existing = await prisma.frictionLog.findUnique({
+        where: { id },
+        select: { eventId: true },
+      });
+      if (!existing) {
+        return res.status(404).json({ error: 'Friction log not found' });
+      }
+      eventId = existing.eventId;
+    }
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot update friction logs' });
+    }
+
     const parsed = updateFrictionLogSchema.parse(req.body);
 
     const updated = await prisma.frictionLog.update({
@@ -79,10 +113,26 @@ frictionLogsRouter.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /api/events/:eventId/friction-logs/:id
+// DELETE /api/events/:eventId/friction-logs/:id or /api/friction-logs/:id
 frictionLogsRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    let eventId = req.params.eventId as string;
+    if (!eventId) {
+      const existing = await prisma.frictionLog.findUnique({
+        where: { id },
+        select: { eventId: true },
+      });
+      if (!existing) {
+        return res.status(404).json({ error: 'Friction log not found' });
+      }
+      eventId = existing.eventId;
+    }
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot delete friction logs' });
+    }
+
     await prisma.frictionLog.delete({
       where: { id },
     });

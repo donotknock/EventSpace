@@ -43,6 +43,10 @@ import {
   RotateCcw,
   Pencil,
   X,
+  SlidersHorizontal,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useSettings } from '../context/SettingsContext';
@@ -80,9 +84,9 @@ const getBlockBrandColor = (type?: string): string => {
     case 'picture':
       return '#f43f5e'; // Rose
     case 'venue':
-      return '#0d9488'; // Teal
+      return '#a855f7'; // Purple (matches VenueNode.tsx)
     case 'video':
-      return '#ef4444'; // Red
+      return '#f97316'; // Orange (matches VideoNode.tsx)
     case 'note':
     default:
       return '#64748b'; // Slate / Neutral
@@ -121,7 +125,7 @@ const CanvasInner: React.FC<{
   locatedNodeId,
   isReadOnly = false,
 }) => {
-  const { screenToFlowPosition, setViewport, fitView, setCenter } = useReactFlow();
+  const { screenToFlowPosition, setViewport, fitView, setCenter, zoomIn, zoomOut } = useReactFlow();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { enablePriority } = useSettings();
 
@@ -130,6 +134,20 @@ const CanvasInner: React.FC<{
 
   // Snap to Grid state
   const [snapToGrid, setSnapToGrid] = useState(false);
+
+  // Short viewport detection (height < 700px)
+  const [isShortViewport, setIsShortViewport] = useState(() =>
+    typeof window !== 'undefined' ? window.innerHeight < 700 : false
+  );
+  const [showControlsPopover, setShowControlsPopover] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsShortViewport(window.innerHeight < 700);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Right-click context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -240,6 +258,7 @@ const CanvasInner: React.FC<{
   // Handle edge delete (touch button or direct call)
   const handleDeleteEdge = useCallback(
     async (edgeId: string) => {
+      if (isReadOnly) return;
       setEdges((eds) => eds.filter((e) => e.id !== edgeId));
       try {
         await api.deleteEdge(activeEvent.id, edgeId);
@@ -247,12 +266,13 @@ const CanvasInner: React.FC<{
         console.error('Failed to delete edge:', err);
       }
     },
-    [activeEvent.id, setEdges]
+    [activeEvent.id, isReadOnly, setEdges]
   );
 
   // Handle edges delete from keyboard Backspace / Delete
   const handleEdgesDelete = useCallback(
     async (deletedEdges: Edge[]) => {
+      if (isReadOnly) return;
       for (const e of deletedEdges) {
         try {
           await api.deleteEdge(activeEvent.id, e.id);
@@ -261,7 +281,144 @@ const CanvasInner: React.FC<{
         }
       }
     },
-    [activeEvent.id]
+    [activeEvent.id, isReadOnly]
+  );
+
+  // Handle edge style updates (solid/dashed, width)
+  const handleUpdateEdgeStyle = useCallback(
+    async (edgeId: string, styleUpdates: { strokeWidth?: number; lineStyle?: 'dashed' | 'solid' }) => {
+      if (isReadOnly) return;
+      let labelPayload = '';
+      let updatedAnimated = true;
+      let updatedLineStyle: 'dashed' | 'solid' = 'dashed';
+      let updatedStrokeWidth = 2.5;
+      setEdges((eds) =>
+        eds.map((e) => {
+          if (e.id !== edgeId) return e;
+          const currentLineStyle: 'dashed' | 'solid' = (e.data?.lineStyle as 'dashed' | 'solid') || 'dashed';
+          const nextLineStyle: 'dashed' | 'solid' =
+            styleUpdates.lineStyle !== undefined ? styleUpdates.lineStyle : currentLineStyle;
+          const currentWidth = typeof e.style?.strokeWidth === 'number' ? e.style.strokeWidth : 2.5;
+          const nextWidth = styleUpdates.strokeWidth !== undefined ? styleUpdates.strokeWidth : currentWidth;
+          const isDashed = nextLineStyle === 'dashed';
+          updatedAnimated = isDashed;
+          updatedLineStyle = nextLineStyle;
+          updatedStrokeWidth = nextWidth;
+
+          const mergedStyle: React.CSSProperties = {
+            ...e.style,
+            strokeWidth: nextWidth,
+            strokeDasharray: isDashed ? '5,5' : 'none',
+            animation: isDashed ? undefined : 'none',
+          };
+          const meta = {
+            strokeWidth: nextWidth,
+            lineStyle: nextLineStyle,
+          };
+          labelPayload = JSON.stringify(meta);
+          return {
+            ...e,
+            animated: isDashed,
+            style: mergedStyle,
+            label: labelPayload,
+            data: {
+              ...e.data,
+              lineStyle: nextLineStyle,
+            },
+          };
+        })
+      );
+      if (labelPayload) {
+        try {
+          await api.updateEdge(activeEvent.id, edgeId, {
+            label: labelPayload,
+            animated: updatedAnimated,
+            lineStyle: updatedLineStyle,
+            strokeWidth: updatedStrokeWidth,
+          });
+        } catch (err) {
+          console.error('Failed to update edge style:', err);
+        }
+      }
+    },
+    [activeEvent.id, isReadOnly, setEdges]
+  );
+
+  // Handle edge reversal (swap source and target)
+  const handleReverseEdge = useCallback(
+    async (edgeId: string) => {
+      if (isReadOnly) return;
+      let reversedSource = '';
+      let reversedTarget = '';
+      let reversedSourceHandle: string | undefined = undefined;
+      let reversedTargetHandle: string | undefined = undefined;
+
+      setEdges((eds) =>
+        eds.map((e) => {
+          if (e.id !== edgeId) return e;
+          reversedSource = e.target;
+          reversedTarget = e.source;
+          reversedSourceHandle = e.targetHandle || undefined;
+          reversedTargetHandle = e.sourceHandle || undefined;
+
+          const newSourceNode =
+            (activeEvent.nodes || []).find((n) => n.id === reversedSource) ||
+            nodes.find((n) => n.id === reversedSource);
+          const brandColor = getBlockBrandColor(
+            (newSourceNode as any)?.type || (newSourceNode as any)?.data?.node?.type
+          );
+
+          return {
+            ...e,
+            source: reversedSource,
+            target: reversedTarget,
+            sourceHandle: reversedSourceHandle,
+            targetHandle: reversedTargetHandle,
+            style: { ...e.style, stroke: brandColor },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: brandColor,
+              width: 18,
+              height: 18,
+            },
+            data: {
+              ...e.data,
+              color: brandColor,
+            },
+          };
+        })
+      );
+
+      if (reversedSource && reversedTarget) {
+        try {
+          await api.updateEdge(activeEvent.id, edgeId, {
+            sourceId: reversedSource,
+            targetId: reversedTarget,
+            sourceHandle: reversedSourceHandle || null,
+            targetHandle: reversedTargetHandle || null,
+          });
+        } catch (err) {
+          console.error('Failed to reverse edge direction:', err);
+        }
+      }
+    },
+    [activeEvent.id, activeEvent.nodes, isReadOnly, nodes, setEdges]
+  );
+
+  // Handle nodes delete from keyboard Backspace / Delete
+  const handleNodesDelete = useCallback(
+    async (deletedNodes: Node[]) => {
+      if (isReadOnly) return;
+      for (const n of deletedNodes) {
+        try {
+          await api.deleteNode(activeEvent.id, n.id);
+        } catch (err) {
+          console.error('Failed to delete node via key/event:', err);
+        }
+      }
+      onRefreshEvent();
+    },
+    [activeEvent.id, isReadOnly, onRefreshEvent]
   );
 
   // Block duplication handler
@@ -277,7 +434,7 @@ const CanvasInner: React.FC<{
       const y = ('position' in targetNode ? targetNode.position.y : targetNode.yPosition) + 30;
 
       try {
-        await api.createNode(activeEvent.id, {
+        const created = await api.createNode(activeEvent.id, {
           type: targetData.type || 'task',
           title: `${targetData.title || 'Block'} (Copy)`,
           content: targetData.content || null,
@@ -287,12 +444,36 @@ const CanvasInner: React.FC<{
           dueDate: null, // No default dates
           isCompleted: false,
         });
+
+        if (created) {
+          let meta: any = {};
+          if (created.metadata) {
+            try {
+              meta = JSON.parse(created.metadata);
+            } catch {}
+          }
+          const newNode: Node = {
+            id: created.id,
+            type: created.type || 'task',
+            position: { x: created.xPosition, y: created.yPosition },
+            style: meta.width && meta.height ? { width: meta.width, height: meta.height } : undefined,
+            data: {
+              node: created,
+              isReadOnly,
+              onUpdate: (id: string, updates: Partial<CanvasNodeItem>) => handleUpdateNodeRef.current(id, updates),
+              onDelete: (id: string) => handleDeleteNodeRef.current(id),
+              onDuplicate: (id: string) => handleDuplicateNodeRef.current(id),
+              isLocated: false,
+            },
+          };
+          setNodes((prev) => [...prev, newNode]);
+        }
         onRefreshEvent();
       } catch (err) {
         console.error('Failed to duplicate node:', err);
       }
     },
-    [activeEvent.id, activeEvent.nodes, nodes, onRefreshEvent]
+    [activeEvent.id, activeEvent.nodes, isReadOnly, nodes, onRefreshEvent, setNodes]
   );
 
   const handleDuplicateNodeRef = useRef(handleDuplicateNode);
@@ -327,6 +508,12 @@ const CanvasInner: React.FC<{
   const handleDeleteEdgeRef = useRef(handleDeleteEdge);
   handleDeleteEdgeRef.current = handleDeleteEdge;
 
+  const handleUpdateEdgeStyleRef = useRef(handleUpdateEdgeStyle);
+  handleUpdateEdgeStyleRef.current = handleUpdateEdgeStyle;
+
+  const handleReverseEdgeRef = useRef(handleReverseEdge);
+  handleReverseEdgeRef.current = handleReverseEdge;
+
   // RENDER SEED DATA IMMEDIATELY
   useEffect(() => {
     if (!activeEvent) return;
@@ -357,6 +544,21 @@ const CanvasInner: React.FC<{
     const initialEdges: Edge[] = (activeEvent.edges || []).map((e) => {
       const sourceNode = (activeEvent.nodes || []).find((n) => n.id === e.sourceId);
       const brandColor = getBlockBrandColor(sourceNode?.type);
+      let edgeMeta: any = {};
+      if (e.label && e.label.startsWith('{')) {
+        try {
+          edgeMeta = JSON.parse(e.label);
+        } catch {}
+      }
+      const strokeWidth = (e as any).strokeWidth ?? edgeMeta.strokeWidth ?? 2.5;
+      const lineStyle: 'dashed' | 'solid' =
+        (e as any).lineStyle === 'solid' ||
+        edgeMeta.lineStyle === 'solid' ||
+        edgeMeta.strokeDasharray === 'none' ||
+        (e.animated === false && !(e as any).lineStyle && !edgeMeta.lineStyle && !edgeMeta.strokeDasharray)
+          ? 'solid'
+          : 'dashed';
+      const isDashed = lineStyle === 'dashed';
 
       return {
         id: e.id,
@@ -365,9 +567,14 @@ const CanvasInner: React.FC<{
         sourceHandle: e.sourceHandle || undefined,
         targetHandle: e.targetHandle || undefined,
         type: 'removable',
-        animated: e.animated ?? true,
+        animated: isDashed,
         label: e.label || undefined,
-        style: { stroke: brandColor, strokeWidth: 2.5 },
+        style: {
+          stroke: brandColor,
+          strokeWidth,
+          strokeDasharray: isDashed ? '5,5' : 'none',
+          animation: isDashed ? undefined : 'none',
+        },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: brandColor,
@@ -376,7 +583,13 @@ const CanvasInner: React.FC<{
         },
         data: {
           onDelete: (edgeId: string) => handleDeleteEdgeRef.current(edgeId),
+          onUpdateStyle: (edgeId: string, styleUpdates: { strokeWidth?: number; lineStyle?: 'dashed' | 'solid' }) =>
+            handleUpdateEdgeStyleRef.current(edgeId, styleUpdates),
+          onReverseDirection: (edgeId: string) => handleReverseEdgeRef.current(edgeId),
           color: brandColor,
+          lineStyle,
+          isViewer: isReadOnly,
+          isReadOnly,
         },
       };
     });
@@ -456,7 +669,7 @@ const CanvasInner: React.FC<{
         targetHandle: targetHandle || undefined,
         type: 'removable',
         animated: true,
-        style: { stroke: brandColor, strokeWidth: 2.5 },
+        style: { stroke: brandColor, strokeWidth: 2.5, strokeDasharray: '5,5' },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: brandColor,
@@ -465,7 +678,12 @@ const CanvasInner: React.FC<{
         },
         data: {
           onDelete: handleDeleteEdge,
+          onUpdateStyle: handleUpdateEdgeStyle,
+          onReverseDirection: handleReverseEdge,
           color: brandColor,
+          lineStyle: 'dashed',
+          isViewer: isReadOnly,
+          isReadOnly,
         },
       };
 
@@ -479,12 +697,15 @@ const CanvasInner: React.FC<{
           targetHandle: targetHandle || undefined,
           type: 'smoothstep',
           animated: true,
+          lineStyle: 'dashed',
+          strokeWidth: 2.5,
+          label: JSON.stringify({ strokeWidth: 2.5, lineStyle: 'dashed' }),
         });
       } catch (err) {
         console.error('Failed to save edge:', err);
       }
     },
-    [activeEvent.id, nodes, setEdges, handleDeleteEdge]
+    [activeEvent.id, nodes, setEdges, handleDeleteEdge, handleUpdateEdgeStyle, handleReverseEdge, isReadOnly]
   );
 
   // Debounced node drag position save
@@ -546,10 +767,7 @@ const CanvasInner: React.FC<{
         const created = await api.createNode(activeEvent.id, {
           type,
           title: defaultTitles[type],
-          content:
-            type === 'picture'
-              ? null
-              : 'Click title or text to customize notes and attached tasks.',
+          content: null,
           xPosition: position.x,
           yPosition: position.y,
           isCompleted: false,
@@ -731,11 +949,13 @@ const CanvasInner: React.FC<{
         <BuildingBlocksPalette
           onSpawnNode={(type) => spawnBuildingBlock(type)}
           hasExistingBlocks={nodes.length > 0}
+          isShortViewport={isShortViewport}
         />
       )}
 
       {/* Main XYFlow Canvas */}
       <ReactFlow
+        proOptions={{ hideAttribution: true }}
         nodes={nodes}
         edges={edges}
         onNodesChange={isReadOnly ? undefined : onNodesChange}
@@ -749,6 +969,7 @@ const CanvasInner: React.FC<{
         nodesConnectable={!isReadOnly}
         elementsSelectable={true}
         isValidConnection={(connection) => Boolean(!isReadOnly && connection.source && connection.target && connection.source !== connection.target)}
+        onNodesDelete={isReadOnly ? undefined : handleNodesDelete}
         onEdgesDelete={isReadOnly ? undefined : handleEdgesDelete}
         onNodeDragStop={isReadOnly ? undefined : onNodeDragStop}
         onMoveEnd={onMoveEnd}
@@ -778,23 +999,77 @@ const CanvasInner: React.FC<{
           className="text-slate-300 dark:text-slate-800 opacity-60"
         />
         {/* Controls Module with Magnet Snap-to-Grid Button */}
-        <Controls
-          className="!bottom-4 !left-4 !bg-white/95 dark:!bg-slate-900/95 !border-slate-200 dark:!border-slate-800 !rounded-xl !shadow-lg"
-          showInteractive={false}
-        >
-          <ControlButton
-            onClick={() => setSnapToGrid(!snapToGrid)}
-            title={snapToGrid ? 'Snap to Grid: ON (Click to disable)' : 'Snap to Grid: OFF (Click to enable)'}
-            aria-label="Toggle snap to grid"
-            className={snapToGrid ? '!bg-blue-50 dark:!bg-blue-950/60' : ''}
+        {isShortViewport ? (
+          <div className="absolute bottom-4 left-4 z-20 select-none">
+            <button
+              onClick={() => setShowControlsPopover(!showControlsPopover)}
+              className="w-10 h-10 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 shadow-xl flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-blue-600 transition-all hover:scale-105 active:scale-95"
+              title="Canvas Zoom & Snap Controls"
+              aria-label="Canvas Zoom and Snap Controls"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+            {showControlsPopover && (
+              <div className="absolute bottom-12 left-0 p-1.5 rounded-2xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col gap-1 z-30 animate-fadeIn">
+                <button
+                  onClick={() => zoomIn({ duration: 300 })}
+                  className="w-8 h-8 rounded-xl flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  title="Zoom In"
+                  aria-label="Zoom In"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => zoomOut({ duration: 300 })}
+                  className="w-8 h-8 rounded-xl flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  title="Zoom Out"
+                  aria-label="Zoom Out"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => fitView({ padding: 0.3, duration: 300 })}
+                  className="w-8 h-8 rounded-xl flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  title="Fit View"
+                  aria-label="Fit View"
+                >
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setSnapToGrid(!snapToGrid)}
+                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
+                    snapToGrid
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                  title={snapToGrid ? 'Snap to Grid: ON' : 'Snap to Grid: OFF'}
+                  aria-label="Toggle Snap to Grid"
+                >
+                  <Magnet className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <Controls
+            className="!bottom-4 !left-4 !bg-white/95 dark:!bg-slate-900/95 !border-slate-200 dark:!border-slate-800 !rounded-xl !shadow-lg"
+            showInteractive={false}
           >
-            <Magnet
-              className={`w-4 h-4 transition-colors ${
-                snapToGrid ? 'text-blue-600 dark:text-blue-400 stroke-[2.5]' : 'text-slate-400'
-              }`}
-            />
-          </ControlButton>
-        </Controls>
+            <ControlButton
+              onClick={() => setSnapToGrid(!snapToGrid)}
+              title={snapToGrid ? 'Snap to Grid: ON (Click to disable)' : 'Snap to Grid: OFF (Click to enable)'}
+              aria-label="Toggle snap to grid"
+              className={snapToGrid ? '!bg-blue-600 !text-white dark:!bg-blue-500 dark:!text-white ring-2 ring-blue-400 shadow-md shadow-blue-500/30' : ''}
+            >
+              <Magnet
+                className={`w-4 h-4 transition-colors ${
+                  snapToGrid ? '!text-white !stroke-white fill-white/20 stroke-[2.5]' : 'text-slate-400'
+                }`}
+                style={snapToGrid ? { stroke: '#ffffff', color: '#ffffff' } : undefined}
+              />
+            </ControlButton>
+          </Controls>
+        )}
       </ReactFlow>
 
       {/* CONTEXT MENU */}
@@ -824,10 +1099,10 @@ const CanvasInner: React.FC<{
         >
           {!frictionDrawerOpen && (
             <span
-              className={`w-5 h-5 rounded-full font-extrabold text-[10px] flex items-center justify-center shadow-md transition-transform ${
+              className={`w-5 h-5 rounded-full font-extrabold text-[10px] flex items-center justify-center shadow-md ${
                 frictionLogs.filter((f) => !f.resolved).length > 0
-                  ? 'bg-white text-red-600 animate-pulse'
-                  : 'bg-red-700/90 text-white'
+                  ? 'bg-white text-red-600'
+                  : 'bg-red-800 text-white'
               }`}
             >
               {frictionLogs.filter((f) => !f.resolved).length}
@@ -866,72 +1141,74 @@ const CanvasInner: React.FC<{
           </div>
 
           {/* Form to Author New Friction Log Item */}
-          <form onSubmit={handleAddFriction} className="p-3.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-800/40 space-y-2.5">
-            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
-              Log New Blocker / Difficulty
-            </span>
-            <input
-              type="text"
-              required
-              placeholder="Difficulty title (e.g. HDMI sync lag)..."
-              value={newFrictionTitle}
-              onChange={(e) => setNewFrictionTitle(e.target.value)}
-              className="w-full text-xs px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500"
-            />
-            <textarea
-              placeholder="Context or notes on how this is being handled..."
-              value={newFrictionDesc}
-              onChange={(e) => setNewFrictionDesc(e.target.value)}
-              rows={2}
-              className="w-full text-xs p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500"
-            />
-            <div className="flex items-center justify-between gap-2">
-              {enablePriority ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">
-                    Priority:
-                  </span>
-                  {(['low', 'medium', 'critical'] as Severity[]).map((sev) => (
-                    <button
-                      key={sev}
-                      type="button"
-                      onClick={() =>
-                        setNewFrictionSeverity(newFrictionSeverity === sev ? 'none' : sev)
-                      }
-                      className={`text-[10px] uppercase font-bold px-2 py-1 rounded-lg capitalize transition-all ${
-                        newFrictionSeverity === sev
-                          ? sev === 'critical'
-                            ? 'bg-red-500 text-white shadow-sm ring-1 ring-red-400'
-                            : sev === 'medium'
-                            ? 'bg-amber-500 text-white shadow-sm ring-1 ring-amber-400'
-                            : 'bg-blue-500 text-white shadow-sm ring-1 ring-blue-400'
-                          : 'bg-white dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
-                      }`}
-                    >
-                      {sev}
-                    </button>
-                  ))}
-                  {newFrictionSeverity !== 'none' && (
-                    <button
-                      type="button"
-                      onClick={() => setNewFrictionSeverity('none')}
-                      className="text-[10px] text-slate-400 hover:text-red-500 underline ml-1"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              ) : <div />}
-              <button
-                type="submit"
-                disabled={!newFrictionTitle.trim() || isSubmittingFriction}
-                className="min-h-[34px] px-3 flex items-center gap-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all disabled:opacity-40"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Log Blocker</span>
-              </button>
-            </div>
-          </form>
+          {!isReadOnly && (
+            <form onSubmit={handleAddFriction} className="p-3.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-800/40 space-y-2.5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
+                Log New Blocker / Difficulty
+              </span>
+              <input
+                type="text"
+                required
+                placeholder="Difficulty title (e.g. HDMI sync lag)..."
+                value={newFrictionTitle}
+                onChange={(e) => setNewFrictionTitle(e.target.value)}
+                className="w-full text-xs px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500"
+              />
+              <textarea
+                placeholder="Context or notes on how this is being handled..."
+                value={newFrictionDesc}
+                onChange={(e) => setNewFrictionDesc(e.target.value)}
+                rows={2}
+                className="w-full text-xs p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-red-500"
+              />
+              <div className="flex items-center justify-between gap-2">
+                {enablePriority ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">
+                      Priority:
+                    </span>
+                    {(['low', 'medium', 'critical'] as Severity[]).map((sev) => (
+                      <button
+                        key={sev}
+                        type="button"
+                        onClick={() =>
+                          setNewFrictionSeverity(newFrictionSeverity === sev ? 'none' : sev)
+                        }
+                        className={`text-[10px] uppercase font-bold px-2 py-1 rounded-lg capitalize transition-all ${
+                          newFrictionSeverity === sev
+                            ? sev === 'critical'
+                              ? 'bg-red-500 text-white shadow-sm ring-1 ring-red-400'
+                              : sev === 'medium'
+                              ? 'bg-amber-500 text-white shadow-sm ring-1 ring-amber-400'
+                              : 'bg-blue-500 text-white shadow-sm ring-1 ring-blue-400'
+                            : 'bg-white dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        {sev}
+                      </button>
+                    ))}
+                    {newFrictionSeverity !== 'none' && (
+                      <button
+                        type="button"
+                        onClick={() => setNewFrictionSeverity('none')}
+                        className="text-[10px] text-slate-400 hover:text-red-500 underline ml-1"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                ) : <div />}
+                <button
+                  type="submit"
+                  disabled={!newFrictionTitle.trim() || isSubmittingFriction}
+                  className="min-h-[34px] px-3 flex items-center gap-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md shadow-red-600/20 active:scale-95 transition-all disabled:opacity-40"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Log Blocker</span>
+                </button>
+              </div>
+            </form>
+          )}
 
           {/* List of Existing Friction Log Items */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1052,43 +1329,45 @@ const CanvasInner: React.FC<{
                         </p>
                       )}
 
-                      <div className="pt-1.5 flex items-center justify-between border-t border-slate-100 dark:border-slate-750 text-[11px]">
-                        <button
-                          onClick={() => handleToggleFrictionResolved(log)}
-                          className={`flex items-center gap-1.5 font-semibold transition-colors ${
-                            log.resolved
-                              ? 'text-slate-400 hover:text-red-600'
-                              : 'text-emerald-600 dark:text-emerald-400 hover:underline'
-                          }`}
-                        >
-                          {log.resolved ? (
-                            <>
-                              <RotateCcw className="w-3.5 h-3.5" /> Re-open issue
-                            </>
-                          ) : (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Mark Resolved
-                            </>
-                          )}
-                        </button>
+                      {!isReadOnly && (
+                        <div className="pt-1.5 flex items-center justify-between border-t border-slate-100 dark:border-slate-750 text-[11px]">
+                          <button
+                            onClick={() => handleToggleFrictionResolved(log)}
+                            className={`flex items-center gap-1.5 font-semibold transition-colors ${
+                              log.resolved
+                                ? 'text-slate-400 hover:text-red-600'
+                                : 'text-emerald-600 dark:text-emerald-400 hover:underline'
+                            }`}
+                          >
+                            {log.resolved ? (
+                              <>
+                                <RotateCcw className="w-3.5 h-3.5" /> Re-open issue
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Mark Resolved
+                              </>
+                            )}
+                          </button>
 
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleStartEditFriction(log)}
-                            className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-blue-500 transition-colors"
-                            title="Edit friction log"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteFriction(log.id)}
-                            className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-red-500 transition-colors"
-                            title="Delete friction log"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleStartEditFriction(log)}
+                              className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-blue-500 transition-colors"
+                              title="Edit friction log"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteFriction(log.id)}
+                              className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-red-500 transition-colors"
+                              title="Delete friction log"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </>
                   )}
                 </div>

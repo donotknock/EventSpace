@@ -18,8 +18,12 @@ import {
   Loader2,
   CheckCircle2,
   Circle,
+  Copy,
 } from 'lucide-react';
 import { CanvasNodeItem } from '../../types';
+import { formatMonthDay } from '../../utils/date';
+import { CustomDatePicker } from '../CustomDatePicker';
+import { triggerAgendaRefresh } from '../../utils/agendaEvents';
 import {
   transcribeAudioBlob,
   summarizeText,
@@ -33,10 +37,13 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
     node: CanvasNodeItem;
     onUpdate: (id: string, updates: Partial<CanvasNodeItem>) => void;
     onDelete: (id: string) => void;
+    onDuplicate?: (id: string) => void;
     isLocated?: boolean;
+    isReadOnly?: boolean;
   };
 
-  const { node, onUpdate, onDelete } = nodeData;
+  const { node, onUpdate, onDelete, onDuplicate } = nodeData;
+  const isReadOnly = Boolean(nodeData.isReadOnly);
 
   // Title editing state
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -119,6 +126,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
     } else {
       onUpdate(props.id, { dueDate: null });
     }
+    triggerAgendaRefresh();
   };
 
   const handleSaveTranscript = () => {
@@ -185,6 +193,41 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Audio = event.target?.result as string;
+      if (base64Audio) {
+        saveAudio(base64Audio, file.name);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file || (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|m4a|aac|ogg|webm|flac)$/i))) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -301,27 +344,31 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
     return `${mins}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const formattedDate = node.dueDate
-    ? new Date(node.dueDate).toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-      })
-    : null;
+  const formattedDate = node.dueDate ? formatMonthDay(node.dueDate) : null;
 
   // Single dot per side styling (violet brand)
-  const handleBaseClasses = `!w-3.5 !h-3.5 !bg-violet-500 hover:!bg-violet-600 dark:!bg-violet-400 !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 ${
-    props.selected ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
+  const handleBaseClasses = `!w-3.5 !h-3.5 !bg-violet-500 hover:!bg-violet-600 dark:!bg-violet-400 !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 -translate-x-1/2 -translate-y-1/2 ${
+    isReadOnly
+      ? '!pointer-events-none !opacity-0'
+      : props.selected
+      ? '!opacity-100'
+      : 'opacity-0 group-hover:opacity-100'
   }`;
 
   return (
     <div
       style={{ '--locate-color': '#8b5cf6' } as React.CSSProperties}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={`group relative w-full h-full min-w-[280px] min-h-[260px] rounded-2xl bg-white dark:bg-slate-900 border-2 border-violet-500/60 dark:border-violet-500/50 hover:border-violet-500 shadow-lg shadow-violet-500/10 transition-all select-none box-border flex flex-col justify-between ${
+        isDragOver ? 'ring-4 ring-violet-500 border-violet-500 bg-violet-50/30' : ''
+      } ${
         nodeData.isLocated ? 'animate-locate-highlight ring-4 ring-offset-2 ring-violet-500' : ''
       } ${node.isCompleted ? 'opacity-50' : ''}`}
     >
       <NodeResizer
-        isVisible={Boolean(props.selected)}
+        isVisible={Boolean(props.selected) && !isReadOnly}
         minWidth={280}
         minHeight={260}
         color="#8b5cf6"
@@ -342,54 +389,93 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
         }}
       />
 
-      {/* Exactly 1 Handle per side: Top (target), Left (target), Right (source), Bottom (source) */}
+      {/* 4 Cardinal Handles: Top, Right, Bottom, Left (Omnidirectional in loose mode) */}
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="top"
+        isConnectable={!isReadOnly}
+        className={handleBaseClasses}
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
       <Handle
         type="target"
         position={Position.Top}
         id="top-target"
-        className={handleBaseClasses}
-        style={{ left: '50%' }}
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
-        type="target"
-        position={Position.Left}
-        id="left-target"
+        type="source"
+        position={Position.Right}
+        id="right"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="right-source"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="bottom"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="bottom-source"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="left"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ left: '50%' }}
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="left-target"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
       />
 
       {/* Header */}
       <div className="p-3 border-b border-slate-100 dark:border-slate-800 rounded-t-2xl flex items-center justify-between gap-2 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onUpdate(props.id, { isCompleted: !node.isCompleted });
-              }}
-              className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
-                node.isCompleted
-                  ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
-                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-              title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
-            >
-              {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
-            </button>
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdate(props.id, { isCompleted: !node.isCompleted });
+                  triggerAgendaRefresh();
+                }}
+                className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
+                  node.isCompleted
+                    ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
+                    : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+                title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
+              >
+                {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+              </button>
+            )}
             <div className="flex-shrink-0 text-violet-500">
               <Mic className="w-4 h-4" />
             </div>
@@ -398,98 +484,71 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
             </span>
           </div>
 
-          {/* Right side: Direct Native Date Tag & Delete */}
+          {/* Right side: 1. Duplicate & Delete (hover only), 2. Date (conditional visibility) */}
           <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
-            {/* Direct Native Date Picker Badge (No intermediate popup) */}
-            <div
-              className="relative inline-flex items-center nodrag nopan"
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              {formattedDate ? (
-                <div
+            {/* Action buttons inside hover-only wrapper */}
+            <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150">
+              {/* 1. Duplicate button */}
+              {!isReadOnly && onDuplicate && (
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                    if (input) {
-                      try {
-                        input.showPicker();
-                      } catch {
-                        input.focus();
-                      }
-                    }
+                    onDuplicate(props.id);
                   }}
-                  className="relative flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 transition-all cursor-pointer"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/50 transition-all"
+                  title="Duplicate block"
                 >
-                  <Calendar className="w-3 h-3 flex-shrink-0" />
-                  <span>{formattedDate}</span>
-                  <input
-                    type="date"
-                    value={dateValue}
-                    onChange={(e) => handleDateChange(e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                    title="Click to change date"
-                  />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleDateChange('');
-                    }}
-                    className="relative z-20 ml-0.5 p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
-                    title="Clear date"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              ) : (
-                <div
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {/* 2. Delete button */}
+              {!isReadOnly && (
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                    if (input) {
-                      try {
-                        input.showPicker();
-                      } catch {
-                        input.focus();
-                      }
-                    }
+                    onDelete(props.id);
                   }}
-                  className="relative flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-dashed border-slate-300 dark:border-slate-700 cursor-pointer"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
+                  title="Delete node"
                 >
-                  <Calendar className="w-2.5 h-2.5 flex-shrink-0" />
-                  <span>+ Date</span>
-                  <input
-                    type="date"
-                    value=""
-                    onChange={(e) => handleDateChange(e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                    title="Click to set due date"
-                  />
-                </div>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
 
-          {/* Delete button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(props.id);
-            }}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
-            title="Delete node"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
+            {/* 3. Date picker badge at far right */}
+            <div
+              className={`nodrag nopan order-last ${
+                dateValue
+                  ? 'opacity-100 pointer-events-auto'
+                  : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-150'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <CustomDatePicker
+                value={dateValue}
+                onChange={(newDate) => handleDateChange(newDate || '')}
+                placeholder="+ Date"
+                size="sm"
+                align="right"
+                disabled={isReadOnly}
+                buttonClassName={
+                  dateValue
+                    ? 'h-6 px-2 text-[11px] font-bold rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                    : 'h-6 px-1.5 text-[10px] font-semibold rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-700'
+                }
+              />
+            </div>
+          </div>
       </div>
 
       {/* Node Body with internal scrollable container */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-3 nodrag">
+      <div
+        className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-3 nodrag nowheel"
+        onWheel={(e) => e.stopPropagation()}
+      >
           {/* Title row */}
           {isEditingTitle ? (
             <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -520,20 +579,26 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
           ) : (
             <div className="flex items-start justify-between gap-1 group/title min-w-0">
               <h4
-                onDoubleClick={() => setIsEditingTitle(true)}
-                className={`text-lg font-semibold cursor-pointer transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+                onDoubleClick={() => {
+                  if (!isReadOnly) setIsEditingTitle(true);
+                }}
+                className={`text-lg font-semibold ${
+                  isReadOnly ? 'cursor-default' : 'cursor-pointer hover:text-violet-600 dark:hover:text-violet-400'
+                } transition-colors leading-snug break-words min-w-0 ${
                   node.isCompleted
                     ? 'line-through text-slate-400 dark:text-slate-500'
-                    : 'text-slate-900 dark:text-slate-100 hover:text-violet-600 dark:hover:text-violet-400'
+                    : 'text-slate-900 dark:text-slate-100'
                 }`}
-                title="Double-click to edit title"
+                title={isReadOnly ? undefined : 'Double-click to edit title'}
               >
                 {node.title || 'Audio Note'}
               </h4>
-              <Edit3
-                onClick={() => setIsEditingTitle(true)}
-                className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
-              />
+              {!isReadOnly && (
+                <Edit3
+                  onClick={() => setIsEditingTitle(true)}
+                  className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
+                />
+              )}
             </div>
           )}
 
@@ -588,13 +653,15 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                       )}
                       <span>{isTranscribing ? 'Transcribing...' : 'AI Transcribe'}</span>
                     </button>
-                    <button
-                      onClick={handleRemoveAudio}
-                      className="p-1.5 text-slate-400 hover:text-red-500 rounded-md transition-colors"
-                      title="Delete audio"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        onClick={handleRemoveAudio}
+                        className="p-1.5 text-slate-400 hover:text-red-500 rounded-md transition-colors"
+                        title="Delete audio"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -641,6 +708,10 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                   Stop
                 </button>
               </div>
+            ) : isReadOnly ? (
+              <div className="text-center py-2 text-xs text-slate-400 font-medium">
+                No audio recording attached
+              </div>
             ) : (
               <div className="flex items-center justify-between gap-2">
                 <button
@@ -655,7 +726,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="min-h-[38px] px-3 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs active:scale-95 transition-all"
-                  title="Upload audio file"
+                  title="Upload audio file (or drag & drop)"
                 >
                   <Upload className="w-3.5 h-3.5 text-violet-500" />
                   <span>Attach</span>
@@ -678,7 +749,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
               <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">
                 Transcript
               </label>
-              {!isEditingTranscript && (
+              {!isReadOnly && !isEditingTranscript && (
                 <button
                   onClick={() => setIsEditingTranscript(true)}
                   className="text-[10px] text-violet-600 dark:text-violet-400 hover:underline font-semibold"
@@ -695,12 +766,13 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                   rows={2}
                   value={transcriptText}
                   onChange={(e) => setTranscriptText(e.target.value)}
+                  onWheel={(e) => e.stopPropagation()}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveTranscript();
                     if (e.key === 'Escape') setIsEditingTranscript(false);
                   }}
-                  placeholder="Transcript placeholder: Enter speech transcript, voice memo notes, or discussion points..."
-                  className="w-full text-xs p-2 rounded-xl border border-violet-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none leading-relaxed font-sans"
+                  placeholder="Enter speech transcript, voice memo notes, or discussion points..."
+                  className="w-full text-xs p-2 rounded-xl border border-violet-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none leading-relaxed font-sans nodrag nowheel"
                 />
                 <div className="flex justify-end gap-1.5">
                   <button
@@ -719,15 +791,25 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
               </div>
             ) : (
               <div
-                onDoubleClick={() => setIsEditingTranscript(true)}
-                className={`p-2.5 rounded-xl border text-xs leading-relaxed cursor-pointer transition-colors max-h-28 overflow-y-auto break-all [overflow-wrap:anywhere] min-w-0 whitespace-pre-wrap ${
+                onDoubleClick={() => {
+                  if (!isReadOnly) setIsEditingTranscript(true);
+                }}
+                className={`p-2.5 rounded-xl border text-xs leading-relaxed transition-colors max-h-28 overflow-y-auto break-words min-w-0 whitespace-pre-wrap ${
+                  isReadOnly ? 'cursor-default' : 'cursor-pointer hover:border-violet-300'
+                } ${
                   node.content
                     ? 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-                    : 'bg-transparent border-dashed border-slate-200 dark:border-slate-800 text-slate-400 italic hover:border-violet-300'
+                    : 'bg-transparent border-dashed border-slate-200 dark:border-slate-800 text-slate-400 italic'
                 }`}
-                title="Double-click to edit transcript"
+                title={isReadOnly ? undefined : 'Double-click to edit transcript'}
               >
-                {node.content ? <AutoLinkText text={node.content} /> : 'Transcript placeholder: Click to add or auto-transcribe speech...'}
+                {node.content ? (
+                  <AutoLinkText text={node.content} />
+                ) : isReadOnly ? (
+                  'No transcript recorded'
+                ) : (
+                  'Click to add or auto-transcribe speech...'
+                )}
               </div>
             )}
           </div>
@@ -739,7 +821,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                   Summary / Key Takeaways
                 </label>
                 <div className="flex items-center gap-1.5">
-                  {(transcriptText || node.content) && (
+                  {!isReadOnly && (transcriptText || node.content) && (
                     <button
                       onClick={handleRunSummarization}
                       disabled={isSummarizing}
@@ -754,7 +836,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                       <span>{isSummarizing ? (summarizingStatus || 'Summarizing...') : 'AI Summarize'}</span>
                     </button>
                   )}
-                  {!isEditingSummary && (
+                  {!isReadOnly && !isEditingSummary && (
                     <button
                       onClick={() => setIsEditingSummary(true)}
                       className="text-[10px] text-violet-600 dark:text-violet-400 hover:underline font-semibold"
@@ -772,12 +854,13 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                     rows={2}
                     value={summaryInput}
                     onChange={(e) => setSummaryInput(e.target.value)}
+                    onWheel={(e) => e.stopPropagation()}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveSummary();
                       if (e.key === 'Escape') setIsEditingSummary(false);
                     }}
-                    placeholder="Summary placeholder: Key takeaways, decisions, or action items from this audio..."
-                    className="w-full text-xs p-2 rounded-xl border border-violet-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none leading-relaxed font-sans"
+                    placeholder="Key takeaways, decisions, or action items from this audio..."
+                    className="w-full text-xs p-2 rounded-xl border border-violet-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none leading-relaxed font-sans nodrag nowheel"
                   />
                   <div className="flex justify-end gap-1.5">
                     <button
@@ -796,16 +879,22 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                 </div>
               ) : (
                 <div
-                  onDoubleClick={() => setIsEditingSummary(true)}
-                  className={`p-2.5 rounded-xl border text-xs leading-relaxed cursor-pointer transition-colors break-all [overflow-wrap:anywhere] min-w-0 ${
+                  onDoubleClick={() => {
+                    if (!isReadOnly) setIsEditingSummary(true);
+                  }}
+                  className={`p-2.5 rounded-xl border text-xs leading-relaxed transition-colors break-words min-w-0 ${
+                    isReadOnly ? 'cursor-default' : 'cursor-pointer hover:border-violet-300'
+                  } ${
                     summaryText
                       ? 'bg-violet-50/40 dark:bg-violet-950/20 border-violet-100 dark:border-violet-900/40 text-slate-700 dark:text-slate-300 font-medium'
-                      : 'bg-transparent border-dashed border-slate-200 dark:border-slate-800 text-slate-400 italic hover:border-violet-300'
+                      : 'bg-transparent border-dashed border-slate-200 dark:border-slate-800 text-slate-400 italic'
                   }`}
-                  title="Double-click to edit summary"
+                  title={isReadOnly ? undefined : 'Double-click to edit summary'}
                 >
                   {!summaryText ? (
-                    <span className="italic text-slate-400">Summary placeholder: Add key takeaways or meeting highlights...</span>
+                    <span className="italic text-slate-400">
+                      {isReadOnly ? 'No summary generated' : 'Add key takeaways or meeting highlights...'}
+                    </span>
                   ) : summaryText === FALLBACK_SUMMARY_TEXT ? (
                     <span className="italic text-slate-400 dark:text-slate-500 font-normal">{FALLBACK_SUMMARY_TEXT}</span>
                   ) : (
@@ -815,7 +904,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                         return (
                           <li key={idx} className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300 text-[11px] leading-relaxed">
                             <span className="w-1.5 h-1.5 rounded-full bg-violet-500 dark:bg-violet-400 mt-1.5 flex-shrink-0" />
-                            <span className="flex-1 break-all [overflow-wrap:anywhere] min-w-0">
+                            <span className="flex-1 break-words min-w-0">
                               <AutoLinkText text={cleanLine} />
                             </span>
                           </li>

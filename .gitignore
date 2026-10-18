@@ -21,8 +21,11 @@ dist-ssr
 *.db-journal
 *.db-wal
 *.db-shm
+backend/prisma/*.db
 dev.db
 eventspace.db
+data/
+/data/
 
 # OS metadata & temporary files
 .DS_Store

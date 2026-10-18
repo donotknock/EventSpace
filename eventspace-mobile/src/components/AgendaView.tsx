@@ -22,6 +22,20 @@ import type {
 import { mobileApi } from '../services/api';
 import { ServerSettingsModal } from './ServerSettingsModal';
 import { useTheme } from '../context/ThemeContext';
+import { getLuminance } from '../utils/color';
+
+function hasExplicitTime(dateStr: string | null | undefined): boolean {
+  if (!dateStr) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return false;
+    // Date-only ISO strings have midnight UTC (00:00:00.000Z), which erroneously converted to 08:00 AM in UTC+8
+    return !(d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0);
+  } catch {
+    return false;
+  }
+}
 
 interface AgendaViewProps {
   config: ServerConfig;
@@ -226,7 +240,10 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
     }
   };
 
+  const enablePriority = localStorage.getItem('eventspace_enable_priority') !== 'false';
+
   const getPriorityBadge = (p?: Priority | null) => {
+    if (!enablePriority) return null;
     switch (p) {
       case 'high':
         return (
@@ -254,12 +271,12 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-950 text-white overflow-hidden select-none">
       {/* Top Mobile Bar */}
-      <header className="safe-top bg-slate-900/90 backdrop-blur border-b border-slate-800/80 px-4 pt-3 pb-3 flex items-center justify-between z-20 flex-shrink-0">
-        <div className="flex items-center gap-2.5">
+      <header className="safe-top bg-slate-900/90 backdrop-blur border-b border-slate-800/80 px-4 pt-3 pb-3 flex items-center justify-between gap-2 z-20 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {onClose && (
             <button
               onClick={onClose}
-              className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center shrink-0 transition-colors mr-1"
+              className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center shrink-0 transition-colors mr-0.5"
               aria-label="Back"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -268,28 +285,28 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
           <img
             src={iconSrc}
             alt="EventSpace"
-            className="w-8 h-8 object-contain rounded-lg shadow-sm"
+            className="w-8 h-8 object-contain rounded-lg shadow-sm shrink-0"
           />
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm tracking-tight text-white">EventSpace</span>
+              <span className="font-extrabold text-sm tracking-tight text-white truncate">EventSpace</span>
               <span
-                className={`w-2 h-2 rounded-full ${
+                className={`w-2 h-2 rounded-full shrink-0 ${
                   isOnline ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-rose-500'
                 }`}
                 title={isOnline ? 'Connected to local server' : 'Offline'}
               />
             </div>
-            <div className="text-[10px] text-slate-400 font-medium">Mobile Agenda</div>
+            <div className="text-[10px] text-slate-400 font-medium truncate">Mobile Agenda</div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           {/* Quick theme cycle */}
           <button
             type="button"
             onClick={cycleTheme}
-            className="w-9 h-9 rounded-xl bg-slate-800/80 text-slate-300 hover:text-white flex items-center justify-center border border-slate-700/60 active:scale-95 transition-all"
+            className="w-9 h-9 rounded-xl bg-slate-800/80 text-slate-300 hover:text-white flex items-center justify-center border border-slate-700/60 active:scale-95 transition-all shrink-0"
             title={`Theme: ${theme}`}
             aria-label="Cycle theme"
           >
@@ -310,7 +327,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
               fetchAgenda(false);
             }}
             disabled={isRefreshing}
-            className="w-9 h-9 rounded-xl bg-slate-800/80 text-slate-300 hover:text-white flex items-center justify-center border border-slate-700/60 active:scale-95 transition-all"
+            className="w-9 h-9 rounded-xl bg-slate-800/80 text-slate-300 hover:text-white flex items-center justify-center border border-slate-700/60 active:scale-95 transition-all shrink-0"
             title="Refresh agenda feed"
             aria-label="Refresh agenda feed"
           >
@@ -321,7 +338,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
           <button
             type="button"
             onClick={() => setIsSettingsOpen(true)}
-            className="w-9 h-9 rounded-xl bg-slate-800/80 text-slate-300 hover:text-white flex items-center justify-center border border-slate-700/60 active:scale-95 transition-all"
+            className="w-9 h-9 rounded-xl bg-slate-800/80 text-slate-300 hover:text-white flex items-center justify-center border border-slate-700/60 active:scale-95 transition-all shrink-0"
             title="Server Connection Settings"
             aria-label="Server Connection Settings"
           >
@@ -482,9 +499,22 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                         <div className="min-w-0 flex-1 space-y-1.5 pt-0.5">
                           <div className="flex items-center gap-2 flex-wrap">
                             {/* Event Title Badge */}
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-[140px]">
-                              {item.event.title}
-                            </span>
+                            {item.event.color ? (
+                              <span
+                                style={{ backgroundColor: item.event.color }}
+                                className={`text-[10px] uppercase tracking-wider truncate max-w-[140px] px-1.5 py-0.5 rounded-md ${
+                                  getLuminance(item.event.color) > 0.6
+                                    ? 'text-slate-900 font-bold border border-slate-900/20'
+                                    : 'text-white font-bold border border-white/20'
+                                }`}
+                              >
+                                {item.event.title}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-[140px]">
+                                {item.event.title}
+                              </span>
+                            )}
 
                             {/* Block Category Badge */}
                             {item.category ? (
@@ -517,7 +547,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                           </div>
 
                           {/* Due Time or Extra Info */}
-                          {item.dueDate && (
+                          {item.dueDate && hasExplicitTime(item.dueDate) && (
                             <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
                               <Clock className="w-3 h-3 text-slate-500" />
                               <span>
@@ -588,9 +618,22 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                         <div className="min-w-0 flex-1 space-y-1.5 pt-0.5">
                           <div className="flex items-center gap-2 flex-wrap">
                             {/* Event Title Badge */}
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-[140px]">
-                              {item.event.title}
-                            </span>
+                            {item.event.color ? (
+                              <span
+                                style={{ backgroundColor: item.event.color }}
+                                className={`text-[10px] uppercase tracking-wider truncate max-w-[140px] px-1.5 py-0.5 rounded-md ${
+                                  getLuminance(item.event.color) > 0.6
+                                    ? 'text-slate-900 font-bold border border-slate-900/20'
+                                    : 'text-white font-bold border border-white/20'
+                                }`}
+                              >
+                                {item.event.title}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-[140px]">
+                                {item.event.title}
+                              </span>
+                            )}
 
                             {/* Block Category Badge */}
                             {item.category ? (

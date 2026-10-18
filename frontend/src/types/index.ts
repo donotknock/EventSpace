@@ -56,6 +56,7 @@ export interface EventItem {
   createdAt: string;
   updatedAt: string;
   contacts?: Contact[];
+  totalAgendaDated?: number;
   _count?: {
     nodes: number;
     checklists: number;
@@ -99,6 +100,8 @@ export interface CanvasEdgeItem {
   targetHandle: string | null;
   type: string | null;
   animated: boolean;
+  lineStyle?: 'dashed' | 'solid';
+  strokeWidth?: number;
   label: string | null;
 }
 

@@ -319,43 +319,48 @@ export const ContactsModal: React.FC<ContactsModalProps> = ({ isOpen, onClose })
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
               {filteredContacts.map((contact) => (
                 <div
                   key={contact.id}
-                  className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 hover:shadow-md transition-all flex flex-col justify-between gap-3 group"
+                  className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 hover:border-slate-300 dark:hover:border-slate-750 hover:shadow-lg dark:hover:shadow-black/40 transition-all flex flex-col justify-between gap-3.5 group"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate">
-                          {contact.name}
-                        </span>
-                        {contact.role && (
-                          <span className="text-[10px] text-slate-400 font-medium truncate">
-                            ({contact.role})
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-100 dark:border-blue-900/50 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-xs flex-shrink-0 mt-0.5 shadow-xs">
+                        {contact.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate">
+                            {contact.name}
                           </span>
+                          {contact.role && (
+                            <span className="text-[10px] text-slate-400 font-medium truncate">
+                              ({contact.role})
+                            </span>
+                          )}
+                        </div>
+                        {contact.department && (
+                          <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 border border-teal-200/60 dark:border-teal-800/60 px-2 py-0.5 rounded-md">
+                            <Building2 className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">{contact.department}</span>
+                          </div>
                         )}
                       </div>
-                      {contact.department && (
-                        <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-teal-700 dark:text-teal-400">
-                          <Building2 className="w-3 h-3 flex-shrink-0" />
-                          <span className="truncate">{contact.department}</span>
-                        </div>
-                      )}
                     </div>
 
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                       <button
                         onClick={() => handleStartEdit(contact)}
-                        className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
+                        className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors"
                         title="Edit contact"
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleDelete(contact.id, contact.name)}
-                        className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-slate-700 transition-colors"
+                        className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-slate-800 transition-colors"
                         title="Delete contact"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -363,17 +368,17 @@ export const ContactsModal: React.FC<ContactsModalProps> = ({ isOpen, onClose })
                     </div>
                   </div>
 
-                  <div className="space-y-1 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-xs">
+                  <div className="space-y-1.5 pt-2.5 border-t border-slate-100 dark:border-slate-800 text-xs">
                     {contact.phone ? (
                       <a
                         href={`tel:${contact.phone}`}
                         className="flex items-center gap-2 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors truncate"
                       >
-                        <Phone className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                        <span className="truncate">{contact.phone}</span>
+                        <Phone className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 flex-shrink-0" />
+                        <span className="truncate font-medium">{contact.phone}</span>
                       </a>
                     ) : (
-                      <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+                      <div className="flex items-center gap-2 text-slate-400 dark:text-slate-600 text-[11px]">
                         <Phone className="w-3.5 h-3.5 flex-shrink-0" />
                         <span>No phone</span>
                       </div>
@@ -384,11 +389,11 @@ export const ContactsModal: React.FC<ContactsModalProps> = ({ isOpen, onClose })
                         href={`mailto:${contact.email}`}
                         className="flex items-center gap-2 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors truncate"
                       >
-                        <Mail className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                        <span className="truncate">{contact.email}</span>
+                        <Mail className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 flex-shrink-0" />
+                        <span className="truncate font-medium">{contact.email}</span>
                       </a>
                     ) : (
-                      <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+                      <div className="flex items-center gap-2 text-slate-400 dark:text-slate-600 text-[11px]">
                         <Mail className="w-3.5 h-3.5 flex-shrink-0" />
                         <span>No email</span>
                       </div>

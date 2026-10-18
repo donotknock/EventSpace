@@ -15,7 +15,9 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('eventspace_theme');
-    return (saved as Theme) || 'dark';
+    if (saved === 'system') return 'dark';
+    if (saved === 'dark' || saved === 'light' || saved === 'high-contrast') return saved;
+    return 'dark';
   });
 
   const [isDyslexic, setIsDyslexic] = useState<boolean>(() => {
@@ -24,14 +26,19 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     const root = document.documentElement;
-    root.classList.remove('dark', 'light', 'high-contrast');
 
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else if (theme === 'high-contrast') {
-      root.classList.add('dark', 'high-contrast');
-    }
+    const applyTheme = (t: Theme) => {
+      root.classList.remove('dark', 'light', 'high-contrast');
+      if (t === 'dark') {
+        root.classList.add('dark');
+      } else if (t === 'high-contrast') {
+        root.classList.add('dark', 'high-contrast');
+      } else {
+        root.classList.add('light');
+      }
+    };
 
+    applyTheme(theme);
     localStorage.setItem('eventspace_theme', theme);
   }, [theme]);
 

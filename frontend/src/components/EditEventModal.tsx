@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { FullEventDetails, Priority, EventItem, Contact } from '../types';
 import {
   X,
@@ -19,10 +19,17 @@ import {
   Shield,
   Loader2,
   LogOut,
+  FileSpreadsheet,
+  FileText,
+  Download,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useSettings } from '../context/SettingsContext';
 import { useAuth } from '../context/AuthContext';
+import { exportEventToExcel, exportEventToPdf } from '../utils/exportEvent';
+import { formatEventDate, formatTime } from '../utils/date';
+import { DateRangePicker } from './DateRangePicker';
+import { CustomTimePicker } from './CustomTimePicker';
 
 interface EditEventModalProps {
   isOpen: boolean;
@@ -52,8 +59,8 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
   );
   const currentShare = event?.shares?.find((s: any) => s.userId === currentUser?.id);
   const isEditor = isOwner || currentShare?.role === 'editor';
-  const isViewer = !isOwner && currentShare?.role === 'viewer';
-  const isSharedUser = !isOwner && Boolean(currentShare);
+  const isViewer = !isOwner && (currentShare?.role === 'viewer' || currentUser?.role === 'viewer');
+  const isSharedUser = !isOwner || Boolean(event?.isShared);
 
   const [title, setTitle] = useState('');
   const [department, setDepartment] = useState('');
@@ -87,11 +94,32 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
   const [newContactName, setNewContactName] = useState('');
   const [newContactRole, setNewContactRole] = useState('');
 
+  // Department Combobox
+  const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
+  const departmentOptions = useMemo(() => {
+    return Array.from(new Set(availableContacts.map((c) => c.department?.trim()).filter(Boolean) as string[]));
+  }, [availableContacts]);
+
+  const filteredDepartments = useMemo(() => {
+    if (!department) return departmentOptions;
+    return departmentOptions.filter((d) => d.toLowerCase().includes(department.toLowerCase()));
+  }, [departmentOptions, department]);
+
+  // Granular template options
+  const [templateIncludeNodes, setTemplateIncludeNodes] = useState(true);
+  const [templateIncludeEdges, setTemplateIncludeEdges] = useState(true);
+  const [templateIncludeTasks, setTemplateIncludeTasks] = useState(true);
+  const [showTemplateOptions, setShowTemplateOptions] = useState(false);
+
   const handleSaveAsTemplate = async () => {
     if (!event) return;
     try {
       setIsSavingTemplate(true);
-      await api.saveAsTemplate(event.id);
+      await api.saveAsTemplate(event.id, {
+        includeNodes: templateIncludeNodes,
+        includeEdges: templateIncludeEdges,
+        includeTasks: templateIncludeTasks,
+      });
       setTemplateSaved(true);
       onTemplateCreated?.();
       setTimeout(() => setTemplateSaved(false), 3000);
@@ -339,8 +367,105 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
               </button>
             </div>
           </div>
+        ) : !isEditor ? (
+          /* Strict Read-Only Viewer View: plain text (<p> or <span>), no inputs, selects, or date pickers */
+          <div className="p-6 space-y-4 overflow-y-auto flex-1">
+            <div className="space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Event Title</span>
+              <p className="text-base font-extrabold text-slate-900 dark:text-white">{event?.title || 'Untitled Event'}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Department / Host</span>
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mt-0.5">{event?.department || 'None specified'}</p>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Priority</span>
+                <p className="text-xs font-semibold mt-0.5">
+                  <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                    event?.priority === 'high'
+                      ? 'bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400'
+                      : event?.priority === 'low'
+                      ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
+                  }`}>
+                    {(event?.priority || 'Normal').toUpperCase()}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Event Dates</span>
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mt-0.5">{formatEventDate(event?.startDate, event?.endDate) || 'Unscheduled'}</p>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Time</span>
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mt-0.5">
+                  {event?.startTime ? `${formatTime(event.startTime)}${event?.endTime ? ` – ${formatTime(event.endTime)}` : ''}` : 'All Day / Unset'}
+                </p>
+              </div>
+            </div>
+
+            {event?.contacts && event.contacts.length > 0 && (
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Persons in Charge</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {event.contacts.map((c) => (
+                    <span key={c.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 font-medium">
+                      <span>👤 {c.name}</span>
+                      {c.role && <span className="text-[10px] text-slate-400">({c.role})</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Read-Only Export Actions */}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => event && exportEventToExcel(event)}
+                className="min-h-[44px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Export CSV</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => event && exportEventToPdf(event)}
+                className="min-h-[44px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors"
+              >
+                <Download className="w-4 h-4 text-blue-600" />
+                <span>Export PDF</span>
+              </button>
+            </div>
+
+            {/* Footer Buttons for Viewer */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+              {isSharedUser && onLeave && (
+                <button
+                  type="button"
+                  onClick={handleLeaveEvent}
+                  disabled={isLeaving}
+                  className="min-h-[44px] px-4 rounded-xl border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs font-bold transition-all"
+                >
+                  {isLeaving ? 'Leaving...' : 'Leave Event'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-[44px] flex-1 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-700 dark:text-slate-200 text-xs font-bold transition-all ml-auto"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         ) : (
-          /* Form Body */
+          /* Editor Form Body */
           <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
@@ -351,117 +476,127 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full h-12 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
-            <div>
+            {/* Department Combobox */}
+            <div className="space-y-1.5 relative">
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
                 <Building2 className="w-3.5 h-3.5 text-slate-400" />
                 <span>Department / Host</span>
               </label>
-              <input
-                type="text"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                className="w-full h-12 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="e.g., Faculty of Engineering"
+                  value={department}
+                  onFocus={() => setIsDeptDropdownOpen(true)}
+                  onChange={(e) => {
+                    setDepartment(e.target.value);
+                    setIsDeptDropdownOpen(true);
+                  }}
+                  className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {department && (
+                  <button
+                    type="button"
+                    onClick={() => setDepartment('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                {isDeptDropdownOpen && filteredDepartments.length > 0 && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setIsDeptDropdownOpen(false)}
+                    />
+                    <ul className="absolute top-full left-0 right-0 mt-1.5 max-h-48 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                      {filteredDepartments.map((deptName) => (
+                        <li
+                          key={deptName}
+                          onClick={() => {
+                            setDepartment(deptName);
+                            setIsDeptDropdownOpen(false);
+                          }}
+                          className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between text-slate-800 dark:text-slate-200"
+                        >
+                          <span>{deptName}</span>
+                          {department === deptName && (
+                            <Check className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Unified Date Range Picker */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                <span>Event Dates (Schedule)</span>
+              </label>
+              <DateRangePicker
+                startDate={startDate}
+                endDate={endDate}
+                onChange={(s, e) => {
+                  setStartDate(s || '');
+                  setEndDate(e || '');
+                  setHasEndDate(Boolean(e && e !== s));
+                }}
               />
             </div>
 
-            {/* Date Picker Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Start Date</span>
-                </label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full h-12 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+            {/* Start and End Time Grid with CustomTimePicker */}
+            {(() => {
+              const isOneDayEvent = Boolean(startDate && (!endDate || startDate === endDate));
+              return (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Start Time</span>
+                    </label>
+                    <CustomTimePicker
+                      value={startTime}
+                      onChange={(val) => {
+                        const newStart = val || '';
+                        setStartTime(newStart);
+                        if (isOneDayEvent && newStart && endTime && endTime < newStart) {
+                          setEndTime(newStart);
+                        }
+                      }}
+                      placeholder="Select start..."
+                    />
+                  </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                    <span>End Date</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!hasEndDate) {
-                        setHasEndDate(true);
-                        setEndDate(startDate || new Date().toISOString().slice(0, 10));
-                      } else {
-                        setHasEndDate(false);
-                        setEndDate('');
-                      }
-                    }}
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${
-                      hasEndDate
-                        ? 'text-red-500 hover:text-red-600 bg-red-50 dark:bg-red-950/40'
-                        : 'text-blue-600 dark:text-blue-400 hover:underline'
-                    }`}
-                  >
-                    {hasEndDate ? 'Clear (One-Day)' : '+ Multi-Day'}
-                  </button>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>End Time</span>
+                    </label>
+                    <CustomTimePicker
+                      value={endTime}
+                      minTime={isOneDayEvent && startTime ? startTime : null}
+                      onChange={(val) => {
+                        if (isOneDayEvent && startTime && val && val < startTime) {
+                          setEndTime(startTime);
+                        } else {
+                          setEndTime(val || '');
+                        }
+                      }}
+                      placeholder="Select end..."
+                    />
+                  </div>
                 </div>
-
-                <div
-                  onClick={() => {
-                    if (!hasEndDate) {
-                      setHasEndDate(true);
-                      setEndDate(startDate || new Date().toISOString().slice(0, 10));
-                    }
-                  }}
-                  className="relative"
-                >
-                  <input
-                    type="date"
-                    disabled={!hasEndDate}
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className={`w-full h-12 px-3 rounded-xl border text-xs transition-all ${
-                      hasEndDate
-                        ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500'
-                        : 'bg-slate-100 dark:bg-slate-800/40 border-dashed border-slate-300 dark:border-slate-700 text-slate-400 cursor-pointer opacity-70'
-                    }`}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Start and End Time Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Start Time</span>
-                </label>
-                <input
-                  type="time"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full h-12 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span>End Time</span>
-                </label>
-                <input
-                  type="time"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full h-12 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Custom Event Color Picker */}
             <div>
@@ -715,11 +850,11 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
                 )}
 
                 {/* Share dropdown row */}
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 min-w-0">
                   <select
                     value={selectedUserId}
                     onChange={(e) => setSelectedUserId(e.target.value)}
-                    className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                    className="flex-1 min-w-0 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white truncate"
                   >
                     <option value="">Select registered user to share...</option>
                     {shareableUsers.map((u) => (
@@ -731,7 +866,7 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
                   <select
                     value={shareRole}
                     onChange={(e) => setShareRole(e.target.value as any)}
-                    className="px-2.5 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                    className="sm:w-auto px-2.5 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                   >
                     <option value="editor">Editor</option>
                     <option value="viewer">Viewer</option>
@@ -740,7 +875,7 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
                     type="button"
                     onClick={handleShareEvent}
                     disabled={isSharing || !selectedUserId}
-                    className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1 transition-all disabled:opacity-50 shrink-0"
+                    className="w-full sm:w-auto justify-center px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50 shrink-0 whitespace-nowrap shadow-sm cursor-pointer"
                   >
                     {isSharing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
                     <span>Share</span>
@@ -803,9 +938,81 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
               </div>
             )}
 
+            {/* Export Event Section */}
+            {event && (
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Export Event
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => exportEventToExcel(event)}
+                    className="min-h-[40px] px-3 flex items-center justify-center gap-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/60 font-bold text-xs hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-all cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Export to Excel (.csv)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportEventToPdf(event)}
+                    className="min-h-[40px] px-3 flex items-center justify-center gap-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 font-bold text-xs hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-all cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Export to PDF</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Save as Template Action (Owners and Editors only) */}
             {isEditor && (
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Template Creation
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateOptions(!showTemplateOptions)}
+                    className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                  >
+                    {showTemplateOptions ? 'Hide Options' : 'Configure Options'}
+                  </button>
+                </div>
+
+                {showTemplateOptions && (
+                  <div className="p-2.5 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 space-y-1.5 text-xs text-slate-700 dark:text-slate-300">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={templateIncludeNodes}
+                        onChange={(e) => setTemplateIncludeNodes(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Include Canvas Building Blocks & Notes</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={templateIncludeEdges}
+                        onChange={(e) => setTemplateIncludeEdges(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Include Block Connections & Flow Lines</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={templateIncludeTasks}
+                        onChange={(e) => setTemplateIncludeTasks(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Include Top Checklist & Tasks</span>
+                    </label>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={handleSaveAsTemplate}

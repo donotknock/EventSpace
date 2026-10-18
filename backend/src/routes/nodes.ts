@@ -218,6 +218,15 @@ nodesRouter.delete('/:id', async (req: Request, res: Response) => {
       where: { id },
       data: { deletedAt: new Date() },
     });
+
+    // Delete any attached edges to avoid orphan dangling edges
+    await prisma.canvasEdge.deleteMany({
+      where: {
+        eventId,
+        OR: [{ sourceId: id }, { targetId: id }],
+      },
+    });
+
     res.json({ success: true, message: 'Node moved to trash' });
   } catch (error) {
     console.error('Failed to delete node:', error);

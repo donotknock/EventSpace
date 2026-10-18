@@ -15,7 +15,9 @@ const edgeSchema = z.object({
   sourceHandle: z.string().optional().nullable(),
   targetHandle: z.string().optional().nullable(),
   type: z.string().default('smoothstep'),
-  animated: z.boolean().default(false),
+  animated: z.boolean().default(true),
+  lineStyle: z.enum(['dashed', 'solid']).default('dashed'),
+  strokeWidth: z.number().default(2.5),
   label: z.string().optional().nullable(),
 });
 
@@ -62,6 +64,10 @@ edgesRouter.post('/', async (req: Request, res: Response) => {
 
     const parsed = edgeSchema.parse(req.body);
 
+    if (parsed.sourceId === parsed.targetId) {
+      return res.status(400).json({ error: 'Self connections are not allowed' });
+    }
+
     const edge = await prisma.canvasEdge.create({
       data: {
         id: parsed.id,
@@ -72,6 +78,8 @@ edgesRouter.post('/', async (req: Request, res: Response) => {
         targetHandle: parsed.targetHandle,
         type: parsed.type,
         animated: parsed.animated,
+        lineStyle: parsed.lineStyle,
+        strokeWidth: parsed.strokeWidth,
         label: parsed.label,
       },
     });
@@ -86,6 +94,46 @@ edgesRouter.post('/', async (req: Request, res: Response) => {
   }
 });
 
+// PATCH /api/events/:eventId/edges/:id - Update edge properties (reverse, style, etc.)
+edgesRouter.patch('/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const eventId = req.params.eventId as string;
+    const event = await checkEventEditAccess(eventId, req.user!.id, req.workspaceId);
+
+    if (!event) {
+      return res.status(403).json({ error: 'Viewers cannot update connections' });
+    }
+
+    const updateEdgeSchema = z.object({
+      sourceId: z.string().optional(),
+      targetId: z.string().optional(),
+      sourceHandle: z.string().optional().nullable(),
+      targetHandle: z.string().optional().nullable(),
+      type: z.string().optional(),
+      animated: z.boolean().optional(),
+      lineStyle: z.enum(['dashed', 'solid']).optional(),
+      strokeWidth: z.number().optional(),
+      label: z.string().optional().nullable(),
+    });
+
+    const parsed = updateEdgeSchema.parse(req.body);
+
+    const updated = await prisma.canvasEdge.update({
+      where: { id },
+      data: parsed,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.errors });
+    }
+    console.error('Failed to update edge:', error);
+    res.status(500).json({ error: 'Failed to update edge' });
+  }
+});
+
 // PUT /api/events/:eventId/edges/sync - Synchronize complete edge set
 edgesRouter.put('/sync', async (req: Request, res: Response) => {
   try {
@@ -97,6 +145,7 @@ edgesRouter.put('/sync', async (req: Request, res: Response) => {
     }
 
     const parsed = syncEdgesSchema.parse(req.body);
+    const validEdges = parsed.edges.filter((e) => e.sourceId !== e.targetId);
 
     // Atomically replace edges for this event
     await prisma.$transaction(async (tx) => {
@@ -104,9 +153,9 @@ edgesRouter.put('/sync', async (req: Request, res: Response) => {
         where: { eventId },
       });
 
-      if (parsed.edges.length > 0) {
+      if (validEdges.length > 0) {
         await tx.canvasEdge.createMany({
-          data: parsed.edges.map((e) => ({
+          data: validEdges.map((e) => ({
             id: e.id,
             eventId,
             sourceId: e.sourceId,
@@ -115,6 +164,8 @@ edgesRouter.put('/sync', async (req: Request, res: Response) => {
             targetHandle: e.targetHandle,
             type: e.type,
             animated: e.animated,
+            lineStyle: e.lineStyle,
+            strokeWidth: e.strokeWidth,
             label: e.label,
           })),
         });

@@ -175,7 +175,7 @@ const handlePairExchange = async (req: Request, res: Response) => {
       deviceName: companionDeviceName,
       pairedAt: new Date().toISOString(),
       service: 'EventSpace Mobile Companion API',
-      version: '1.1.0',
+      version: '1.1.2',
     });
   } catch (error) {
     console.error('Pairing exchange error:', error);

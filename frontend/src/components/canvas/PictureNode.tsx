@@ -13,18 +13,25 @@ import {
   RefreshCw,
   Image as ImageIcon,
   Maximize2,
+  Copy,
 } from 'lucide-react';
 import { CanvasNodeItem } from '../../types';
+import { formatMonthDay } from '../../utils/date';
+import { CustomDatePicker } from '../CustomDatePicker';
+import { triggerAgendaRefresh } from '../../utils/agendaEvents';
 
 export const PictureNode: React.FC<NodeProps> = (props) => {
   const nodeData = props.data as unknown as {
     node: CanvasNodeItem;
     onUpdate: (id: string, updates: Partial<CanvasNodeItem>) => void;
     onDelete: (id: string) => void;
+    onDuplicate?: (id: string) => void;
     isLocated?: boolean;
+    isReadOnly?: boolean;
   };
 
-  const { node, onUpdate, onDelete } = nodeData;
+  const { node, onUpdate, onDelete, onDuplicate } = nodeData;
+  const isReadOnly = Boolean(nodeData.isReadOnly);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Title editing state
@@ -74,6 +81,7 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
     } else {
       onUpdate(props.id, { dueDate: null });
     }
+    triggerAgendaRefresh();
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -103,28 +111,73 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
     }
   };
 
-  const formattedDate = node.dueDate
-    ? new Date(node.dueDate).toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-      })
-    : null;
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (isReadOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+
+    setIsLoadingFile(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      if (base64) {
+        onUpdate(props.id, { content: base64 });
+      }
+      setIsLoadingFile(false);
+    };
+    reader.onerror = () => {
+      console.error('Failed to read dropped image file');
+      setIsLoadingFile(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const formattedDate = node.dueDate ? formatMonthDay(node.dueDate) : null;
 
   const hasImage = Boolean(node.content && node.content.startsWith('data:image'));
 
-  const handleBaseClasses = `!w-3.5 !h-3.5 !bg-rose-500 hover:!bg-rose-600 dark:!bg-rose-400 !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 ${
-    props.selected ? '!opacity-100' : 'opacity-0 group-hover:opacity-100'
+  const handleBaseClasses = `!w-3.5 !h-3.5 !bg-rose-500 hover:!bg-rose-600 dark:!bg-rose-400 !border-2 !border-white dark:!border-slate-900 shadow-md hover:!scale-125 transition-all duration-200 -translate-x-1/2 -translate-y-1/2 ${
+    isReadOnly
+      ? '!pointer-events-none !opacity-0'
+      : props.selected
+      ? '!opacity-100'
+      : 'opacity-0 group-hover:opacity-100'
   }`;
 
   return (
     <div
       style={{ '--locate-color': '#f43f5e' } as React.CSSProperties}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={`group relative w-full h-full min-w-[280px] min-h-[220px] rounded-2xl bg-white dark:bg-slate-900 border-2 border-rose-500/60 dark:border-rose-500/50 hover:border-rose-500 shadow-lg shadow-rose-500/10 transition-all select-none box-border flex flex-col justify-between ${
+        isDragOver ? 'ring-4 ring-rose-500 border-rose-500 bg-rose-50/30' : ''
+      } ${
         nodeData.isLocated ? 'animate-locate-highlight ring-4 ring-offset-2 ring-rose-500' : ''
       } ${node.isCompleted ? 'opacity-50' : ''}`}
     >
       <NodeResizer
-        isVisible={Boolean(props.selected)}
+        isVisible={Boolean(props.selected) && !isReadOnly}
         minWidth={280}
         minHeight={200}
         color="#f43f5e"
@@ -145,54 +198,93 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
         }}
       />
 
-      {/* Exactly 1 Handle per side: Top (target), Left (target), Right (source), Bottom (source) */}
+      {/* 4 Cardinal Handles: Top, Right, Bottom, Left (Omnidirectional in loose mode) */}
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="top"
+        isConnectable={!isReadOnly}
+        className={handleBaseClasses}
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
       <Handle
         type="target"
         position={Position.Top}
         id="top-target"
-        className={handleBaseClasses}
-        style={{ left: '50%' }}
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
-        type="target"
-        position={Position.Left}
-        id="left-target"
+        type="source"
+        position={Position.Right}
+        id="right"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="right-source"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: '100%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="bottom"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ top: '50%' }}
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="bottom-source"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '100%', left: '50%', transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="left"
+        isConnectable={!isReadOnly}
         className={handleBaseClasses}
-        style={{ left: '50%' }}
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="left-target"
+        isConnectable={!isReadOnly}
+        className="!w-0 !h-0 !opacity-0 !pointer-events-none !border-0"
+        style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
       />
 
       {/* Header */}
       <div className="p-3 border-b border-slate-100 dark:border-slate-800 rounded-t-2xl flex items-center justify-between gap-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onUpdate(props.id, { isCompleted: !node.isCompleted });
-            }}
-            className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
-              node.isCompleted
-                ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
-                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-            title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
-          >
-            {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUpdate(props.id, { isCompleted: !node.isCompleted });
+                triggerAgendaRefresh();
+              }}
+              className={`w-5 h-5 flex items-center justify-center rounded-md transition-all nodrag nopan ${
+                node.isCompleted
+                  ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-500/40'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              title={node.isCompleted ? 'Mark Block Incomplete' : 'Mark Block Complete'}
+            >
+              {node.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+            </button>
+          )}
           <div className="flex-shrink-0 text-rose-500">
             <Camera className="w-4 h-4" />
           </div>
@@ -201,98 +293,71 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
           </span>
         </div>
 
-        {/* Right side: Direct Native Date tag & Delete button */}
+        {/* Right side: 1. Duplicate & Delete (hover only), 2. Date (conditional visibility) */}
         <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
-          {/* Direct Native Date Picker Badge (No intermediate popup) */}
-          <div
-            className="relative inline-flex items-center nodrag nopan"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            {formattedDate ? (
-              <div
+          {/* Action buttons inside hover-only wrapper */}
+          <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150">
+            {/* 1. Duplicate button */}
+            {!isReadOnly && onDuplicate && (
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                  if (input) {
-                    try {
-                      input.showPicker();
-                    } catch {
-                      input.focus();
-                    }
-                  }
+                  onDuplicate(props.id);
                 }}
-                className="relative flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 transition-all cursor-pointer"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-all"
+                title="Duplicate block"
               >
-                <Calendar className="w-3 h-3 flex-shrink-0" />
-                <span>{formattedDate}</span>
-                <input
-                  type="date"
-                  value={dateValue}
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                  title="Click to change date"
-                />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    handleDateChange('');
-                  }}
-                  className="relative z-20 ml-0.5 p-0.5 text-amber-700/60 dark:text-amber-400/60 hover:text-red-500 rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
-                  title="Clear date"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
-              </div>
-            ) : (
-              <div
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* 2. Delete button */}
+            {!isReadOnly && (
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  const input = e.currentTarget.querySelector('input[type="date"]') as HTMLInputElement | null;
-                  if (input) {
-                    try {
-                      input.showPicker();
-                    } catch {
-                      input.focus();
-                    }
-                  }
+                  onDelete(props.id);
                 }}
-                className="relative flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-dashed border-slate-300 dark:border-slate-700 cursor-pointer"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
+                title="Delete node"
               >
-                <Calendar className="w-2.5 h-2.5 flex-shrink-0" />
-                <span>+ Date</span>
-                <input
-                  type="date"
-                  value=""
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="badge-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer nodrag nopan z-10"
-                  title="Click to set due date"
-                />
-              </div>
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
-          {/* Delete button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(props.id);
-            }}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
-            title="Delete node"
+          {/* 3. Date picker badge at far right */}
+          <div
+            className={`nodrag nopan order-last ${
+              dateValue
+                ? 'opacity-100 pointer-events-auto'
+                : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-150'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
           >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+            <CustomDatePicker
+              value={dateValue}
+              onChange={(newDate) => handleDateChange(newDate || '')}
+              placeholder="+ Date"
+              size="sm"
+              align="right"
+              disabled={isReadOnly}
+              buttonClassName={
+                dateValue
+                  ? 'h-6 px-2 text-[11px] font-bold rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                  : 'h-6 px-1.5 text-[10px] font-semibold rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-700'
+              }
+            />
+          </div>
         </div>
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-2.5 nodrag">
+      <div
+        className="flex-1 overflow-y-auto min-h-0 p-3.5 space-y-2.5 nodrag nowheel"
+        onWheel={(e) => e.stopPropagation()}
+      >
         {/* Title row */}
         {isEditingTitle ? (
           <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -323,20 +388,26 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
         ) : (
           <div className="flex items-start justify-between gap-1 group/title min-w-0">
             <h4
-              onDoubleClick={() => setIsEditingTitle(true)}
-              className={`text-lg font-semibold cursor-pointer transition-colors leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+              onDoubleClick={() => {
+                if (!isReadOnly) setIsEditingTitle(true);
+              }}
+              className={`text-lg font-semibold ${
+                isReadOnly ? 'cursor-default' : 'cursor-pointer hover:text-rose-600 dark:hover:text-rose-400'
+              } transition-colors leading-snug break-words min-w-0 ${
                 node.isCompleted
                   ? 'line-through text-slate-400 dark:text-slate-500'
-                  : 'text-slate-900 dark:text-slate-100 hover:text-rose-600 dark:hover:text-rose-400'
+                  : 'text-slate-900 dark:text-slate-100'
               }`}
-              title="Double-click to edit caption"
+              title={isReadOnly ? undefined : 'Double-click to edit caption'}
             >
               {node.title || 'Event Photo'}
             </h4>
-            <Edit3
-              onClick={() => setIsEditingTitle(true)}
-              className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
-            />
+            {!isReadOnly && (
+              <Edit3
+                onClick={() => setIsEditingTitle(true)}
+                className="w-3 h-3 text-slate-400 opacity-0 group-hover/title:opacity-100 cursor-pointer flex-shrink-0 mt-0.5"
+              />
+            )}
           </div>
         )}
 
@@ -376,30 +447,41 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
                   <Maximize2 className="w-3.5 h-3.5" />
                   View
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    fileInputRef.current?.click();
-                  }}
-                  className="min-h-[44px] px-3 rounded-xl bg-white text-slate-900 text-xs font-bold shadow-lg flex items-center gap-1.5 hover:bg-slate-100 active:scale-95 transition-all"
-                  title="Replace photo"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Replace
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemoveImage();
-                  }}
-                  className="min-h-[44px] px-3 rounded-xl bg-red-600 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 hover:bg-red-500 active:scale-95 transition-all"
-                  title="Remove photo"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Remove
-                </button>
+                {!isReadOnly && (
+                  <>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fileInputRef.current?.click();
+                      }}
+                      className="min-h-[44px] px-3 rounded-xl bg-white text-slate-900 text-xs font-bold shadow-lg flex items-center gap-1.5 hover:bg-slate-100 active:scale-95 transition-all"
+                      title="Replace photo"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Replace
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveImage();
+                      }}
+                      className="min-h-[44px] px-3 rounded-xl bg-red-600 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 hover:bg-red-500 active:scale-95 transition-all"
+                      title="Remove photo"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remove
+                    </button>
+                  </>
+                )}
               </div>
             </div>
+          </div>
+        ) : isReadOnly ? (
+          <div className="p-4 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/50 dark:bg-slate-950/20 text-center space-y-1">
+            <div className="w-8 h-8 mx-auto rounded-full bg-slate-100 dark:bg-slate-900/40 text-slate-400 flex items-center justify-center">
+              <ImageIcon className="w-4 h-4" />
+            </div>
+            <p className="text-xs text-slate-400 font-medium">No photo uploaded</p>
           </div>
         ) : (
           <div className="p-4 border-2 border-dashed border-rose-300 dark:border-rose-900/60 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 text-center space-y-2">
@@ -411,7 +493,7 @@ export const PictureNode: React.FC<NodeProps> = (props) => {
                 Snap or Upload Photo
               </p>
               <p className="text-[10px] text-slate-400 mt-0.5">
-                iPad Camera or Unraid Storage
+                Drag & drop image, iPad camera, or file picker
               </p>
             </div>
             <button

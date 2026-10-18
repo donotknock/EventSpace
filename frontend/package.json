@@ -1,9 +1,9 @@
 {
   "name": "eventspace-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.2",
   "author": "donotknock",
-  "homepage": "https://donotknock.app",
+  "homepage": "https://donotknock.app/apps/eventspace/",
   "type": "module",
   "scripts": {
     "dev": "vite",
