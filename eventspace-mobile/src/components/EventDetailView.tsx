@@ -53,12 +53,14 @@ import {
   Users,
   Megaphone,
   Star,
+  Download,
 } from 'lucide-react';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { AutoLinkText } from '../utils/linkify';
 import { ContentWithTables } from '../utils/markdownTable';
 import { useTheme } from '../context/ThemeContext';
 import { getLuminance } from '../utils/color';
+import { downloadMediaFile } from '../utils/mediaDownload';
 import type {
   CanvasEdgeItem,
   CanvasNodeItem,
@@ -140,6 +142,39 @@ function getCategoryColorClasses(colorName: string) {
   }
 }
 
+const RAW_EXTENSIONS = ['dng', 'cr2', 'cr3', 'arw', 'nef', 'orf', 'rw2', 'pef', 'raf'];
+
+function parseVideoSource(url?: string): { type: 'youtube' | 'vimeo' | 'html5' | 'unknown'; embedUrl: string } {
+  if (!url) return { type: 'unknown', embedUrl: '' };
+
+  // YouTube standard, short, or nocookie
+  const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+  if (ytMatch) {
+    return { type: 'youtube', embedUrl: `https://www.youtube-nocookie.com/embed/${ytMatch[1]}?autoplay=0&rel=0` };
+  }
+
+  // Vimeo
+  const vimeoMatch = url.match(/vimeo\.com\/(?:channels\/(?:\w+\/)?|groups\/(?:[^\/]*)\/videos\/|album\/(?:\d+)\/video\/|video\/|)(\d+)/);
+  if (vimeoMatch) {
+    return { type: 'vimeo', embedUrl: `https://player.vimeo.com/video/${vimeoMatch[1]}` };
+  }
+
+  // Direct video or data URL
+  if (
+    url.startsWith('data:video/') ||
+    url.endsWith('.mp4') ||
+    url.endsWith('.webm') ||
+    url.endsWith('.ogg') ||
+    url.endsWith('.mov') ||
+    url.includes('blob:') ||
+    url.startsWith('http')
+  ) {
+    return { type: 'html5', embedUrl: url };
+  }
+
+  return { type: 'unknown', embedUrl: '' };
+}
+
 interface EventDetailViewProps {
   event: EventItem;
   config: ServerConfig;
@@ -181,6 +216,31 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
       ...prev,
       [nodeId]: !prev[nodeId],
     }));
+  };
+
+  // Collapsible Building Blocks state - default empty (all expanded by default)
+  const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(new Set());
+
+  const toggleBlockCollapse = (nodeId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setCollapsedBlockIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  };
+
+  const toggleCollapseAll = () => {
+    if (!eventData?.nodes || eventData.nodes.length === 0) return;
+    if (collapsedBlockIds.size === eventData.nodes.length) {
+      setCollapsedBlockIds(new Set());
+    } else {
+      setCollapsedBlockIds(new Set(eventData.nodes.map((n) => n.id)));
+    }
   };
 
   // Native Audio Recording state
@@ -277,10 +337,12 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
   const [isSubmittingFriction, setIsSubmittingFriction] = useState(false);
   const [frictionFilter, setFrictionFilter] = useState<'all' | 'unresolved' | 'resolved'>('all');
 
-  const isViewer =
-    (eventData as any)?.userRole?.toUpperCase() === 'VIEWER' ||
-    (initialEvent as any)?.userRole?.toUpperCase() === 'VIEWER' ||
-    (initialEvent as any)?.role?.toUpperCase() === 'VIEWER';
+  const rawRole =
+    (eventData as any)?.userRole ||
+    (eventData as any)?.role ||
+    (initialEvent as any)?.userRole ||
+    (initialEvent as any)?.role;
+  const isViewer = typeof rawRole === 'string' && rawRole.trim().toLowerCase() === 'viewer';
 
   const unresolvedFrictionCount = useMemo(() => {
     return frictionLogs.filter((f) => !f.resolved).length;
@@ -1539,6 +1601,23 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                   Building Blocks ({eventData?.nodes?.filter((n) => (hideCompleted ? !n.isCompleted : true)).length || 0})
                 </span>
                 <div className="flex items-center gap-2">
+                  {/* Collapse All / Expand All toggle */}
+                  {eventData?.nodes && eventData.nodes.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={toggleCollapseAll}
+                      className="px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60"
+                      title={collapsedBlockIds.size === eventData.nodes.length ? 'Expand all blocks' : 'Collapse all blocks'}
+                    >
+                      {collapsedBlockIds.size === eventData.nodes.length ? (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      )}
+                      <span>{collapsedBlockIds.size === eventData.nodes.length ? 'Expand All' : 'Collapse All'}</span>
+                    </button>
+                  )}
+
                   {/* Global Hide Completed toggle */}
                   <button
                     type="button"
@@ -1605,6 +1684,13 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                     ? subtasksList.filter((s) => isNonCheckable(s) || !s.done)
                     : subtasksList;
 
+                  const checkableSubtasks = subtasksList.filter((s) => !isNonCheckable(s));
+                  const completedSubtasks = checkableSubtasks.filter((s) => s.done);
+                  const subtaskCounter =
+                    checkableSubtasks.length > 0
+                      ? `${completedSubtasks.length}/${checkableSubtasks.length}`
+                      : null;
+
                   const formattedDate = node.dueDate
                     ? new Date(node.dueDate).toLocaleDateString(undefined, {
                         month: 'short',
@@ -1612,6 +1698,144 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       })
                     : null;
 
+                  // Extract picture image URL across all potential properties
+                  const nodeImageUrl =
+                    (node as any).data?.imageUrl ||
+                    (node as any).data?.previewUrl ||
+                    (node as any).data?.url ||
+                    nodeMetadataObj.imageUrl ||
+                    nodeMetadataObj.previewUrl ||
+                    nodeMetadataObj.rawOriginalUrl ||
+                    (node.content && (node.content.startsWith('data:') || node.content.startsWith('http') || node.content.startsWith('blob:')) ? node.content : null);
+
+                  const isRawFormat = Boolean(
+                    nodeMetadataObj.isRaw ||
+                    (nodeMetadataObj.fileName && RAW_EXTENSIONS.some((ext) => nodeMetadataObj.fileName.toLowerCase().endsWith(ext)))
+                  );
+                  const rawBadgeText = nodeMetadataObj.rawExt || (nodeMetadataObj.fileName?.includes('.') ? nodeMetadataObj.fileName.split('.').pop()?.toUpperCase() : 'RAW');
+
+                  // Extract video URL across all potential properties
+                  const nodeVideoUrl =
+                    (node as any).data?.videoUrl ||
+                    (node as any).data?.embedUrl ||
+                    (node as any).data?.url ||
+                    nodeMetadataObj.videoUrl ||
+                    nodeMetadataObj.embedUrl ||
+                    (node.content && (
+                      node.content.includes('youtube.com') ||
+                      node.content.includes('youtu.be') ||
+                      node.content.includes('vimeo.com') ||
+                      node.content.startsWith('data:video') ||
+                      node.content.startsWith('http') ||
+                      node.content.endsWith('.mp4') ||
+                      node.content.endsWith('.webm') ||
+                      node.content.endsWith('.mov')
+                    ) ? node.content : null);
+
+                  const mediaUrl =
+                    node.type === 'picture'
+                      ? (nodeMetadataObj.rawOriginalUrl || nodeImageUrl)
+                      : node.type === 'video'
+                      ? nodeVideoUrl
+                      : node.type === 'audio'
+                      ? nodeMetadataObj.audioUrl
+                      : null;
+
+                  const isCollapsed = collapsedBlockIds.has(node.id);
+
+                  // When Collapsed: Render ONLY compact single-line block header
+                  if (isCollapsed) {
+                    return (
+                      <div
+                        key={node.id}
+                        className={`px-3.5 py-2.5 rounded-2xl border-2 bg-white dark:bg-slate-900 shadow-xs transition-all flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-50/70 dark:hover:bg-slate-800/40 ${getCardBorderClass(
+                          node.type
+                        )}`}
+                        onClick={() => toggleBlockCollapse(node.id)}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleNodeCompleted(node);
+                            }}
+                            className="text-slate-400 hover:text-blue-500 shrink-0 transition-colors"
+                            title={node.isCompleted ? 'Mark incomplete' : 'Mark completed'}
+                          >
+                            {node.isCompleted ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500 fill-emerald-500/20" />
+                            ) : (
+                              <Circle className="w-4 h-4 text-slate-400 hover:text-blue-500" />
+                            )}
+                          </button>
+
+                          <div className="shrink-0">{getNodeTypeBadge(node.type)}</div>
+
+                          <span
+                            className={`text-sm font-semibold truncate ${
+                              node.isCompleted
+                                ? 'line-through text-slate-400 dark:text-slate-500 font-normal'
+                                : 'text-slate-900 dark:text-white'
+                            }`}
+                            title={node.title}
+                          >
+                            {node.title}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                          {formattedDate && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                              <Calendar className="w-2.5 h-2.5 text-slate-400" />
+                              <span>{formattedDate}</span>
+                            </span>
+                          )}
+
+                          {subtaskCounter && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-900/40">
+                              {subtaskCounter}
+                            </span>
+                          )}
+
+                          {mediaUrl && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadMediaFile(
+                                  mediaUrl,
+                                  node.type === 'picture'
+                                    ? (nodeMetadataObj.fileName || `${node.title || 'photo'}.jpg`)
+                                    : node.type === 'video'
+                                    ? (nodeMetadataObj.videoName || `${node.title || 'video'}.mp4`)
+                                    : (nodeMetadataObj.audioName || `${node.title || 'voice-note'}.webm`)
+                                );
+                              }}
+                              className="w-6 h-6 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center transition-colors cursor-pointer"
+                              title="Download media file"
+                            >
+                              <Download className="w-3 h-3" />
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleBlockCollapse(node.id);
+                            }}
+                            className="w-6 h-6 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center justify-center transition-colors"
+                            title="Expand block"
+                          >
+                            <ChevronDown className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // When Expanded (Default): Render the full block card
                   return (
                     <div
                       key={node.id}
@@ -1639,7 +1863,28 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1">
+                          {mediaUrl && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadMediaFile(
+                                  mediaUrl,
+                                  node.type === 'picture'
+                                    ? (nodeMetadataObj.fileName || `${node.title || 'photo'}.jpg`)
+                                    : node.type === 'video'
+                                    ? (nodeMetadataObj.videoName || `${node.title || 'video'}.mp4`)
+                                    : (nodeMetadataObj.audioName || `${node.title || 'voice-note'}.webm`)
+                                );
+                              }}
+                              className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center transition-colors cursor-pointer"
+                              title="Download media file"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
+                            type="button"
                             onClick={() => handleDuplicateNode(node)}
                             className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center transition-colors"
                             title="Duplicate block"
@@ -1647,6 +1892,7 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                             <Copy className="w-3.5 h-3.5" />
                           </button>
                           <button
+                            type="button"
                             onClick={() => {
                               setEditingNode(node);
                               setDefaultBlockType(node.type);
@@ -1658,11 +1904,20 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleDeleteNode(node.id)}
                             className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-rose-500 flex items-center justify-center transition-colors"
                             title="Delete block"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => toggleBlockCollapse(node.id, e)}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center justify-center transition-colors cursor-pointer ml-0.5"
+                            title="Collapse block"
+                          >
+                            <ChevronUp className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
@@ -1683,19 +1938,40 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
 
                         <div className="flex-1 min-w-0">
                           <h3
-                            className={`text-lg font-semibold leading-snug break-all [overflow-wrap:anywhere] min-w-0 ${
+                            onClick={() => {
+                              setEditingNode(node);
+                              setDefaultBlockType(node.type);
+                              setIsBlockModalOpen(true);
+                            }}
+                            className={`text-lg font-semibold leading-snug break-all [overflow-wrap:anywhere] min-w-0 cursor-pointer hover:text-blue-500 transition-colors ${
                               node.isCompleted
                                 ? 'line-through text-slate-400 dark:text-slate-500 font-normal'
                                 : 'text-slate-900 dark:text-white'
                             }`}
+                            title="Tap to edit block"
                           >
                             {node.title}
                           </h3>
 
                           {/* Node Content / Description with Markdown Tables */}
-                          {node.content && node.type !== 'picture' && (
-                            <div className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 break-all [overflow-wrap:anywhere] min-w-0 leading-relaxed">
+                          {node.content && node.type !== 'picture' && (node.type !== 'video' || node.content !== nodeVideoUrl) && (
+                            <div
+                              onClick={() => {
+                                setEditingNode(node);
+                                setDefaultBlockType(node.type);
+                                setIsBlockModalOpen(true);
+                              }}
+                              className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 break-all [overflow-wrap:anywhere] min-w-0 leading-relaxed cursor-pointer hover:text-blue-500 transition-colors"
+                              title="Tap to edit details"
+                            >
                               <ContentWithTables content={node.content} />
+                            </div>
+                          )}
+
+                          {/* Picture Caption / Notes (if available in metadata) */}
+                          {node.type === 'picture' && (nodeMetadataObj.caption || nodeMetadataObj.notes) && (
+                            <div className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 italic break-all [overflow-wrap:anywhere] min-w-0">
+                              {nodeMetadataObj.caption || nodeMetadataObj.notes}
                             </div>
                           )}
                         </div>
@@ -1906,41 +2182,78 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       )}
 
                       {/* Video Node Player / Embed */}
-                      {node.type === 'video' && node.content && (
-                        <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black aspect-video flex items-center justify-center">
-                          {node.content.includes('youtube.com') || node.content.includes('youtu.be') ? (
-                            <iframe
-                              src={node.content.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')}
-                              className="w-full h-full border-0"
-                              allowFullScreen
-                              title={node.title}
-                            />
-                          ) : node.content.includes('vimeo.com') ? (
-                            <iframe
-                              src={`https://player.vimeo.com/video/${node.content.split('/').pop()}`}
-                              className="w-full h-full border-0"
-                              allowFullScreen
-                              title={node.title}
-                            />
-                          ) : (
-                            <video
-                              src={node.content}
-                              controls
-                              className="w-full h-full object-contain"
-                            />
-                          )}
+                      {node.type === 'video' && nodeVideoUrl && (
+                        <div className="space-y-1.5">
+                          <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black aspect-video flex items-center justify-center">
+                            {(() => {
+                              const vSource = parseVideoSource(nodeVideoUrl);
+                              if (vSource.type === 'youtube' || vSource.type === 'vimeo') {
+                                return (
+                                  <iframe
+                                    src={vSource.embedUrl}
+                                    className="w-full h-full border-0"
+                                    allowFullScreen
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    title={node.title}
+                                  />
+                                );
+                              } else {
+                                return (
+                                  <video
+                                    src={vSource.embedUrl || nodeVideoUrl}
+                                    controls
+                                    className="w-full h-full object-contain"
+                                  />
+                                );
+                              }
+                            })()}
+                          </div>
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadMediaFile(nodeVideoUrl, nodeMetadataObj.videoName || `${node.title || 'video'}.mp4`);
+                              }}
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-500 py-1 transition-colors cursor-pointer"
+                              title="Download video"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Download Video</span>
+                            </button>
+                          </div>
                         </div>
                       )}
 
                       {/* Picture Node Content */}
-                      {node.type === 'picture' && node.content && (
-                        <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800">
+                      {node.type === 'picture' && nodeImageUrl && (
+                        <div className="relative group/img w-full max-h-[280px] flex items-center justify-center overflow-hidden bg-slate-950/40 rounded-xl my-2 border border-slate-700/50">
                           <img
-                            src={node.content}
+                            src={nodeImageUrl}
                             alt={node.title}
-                            onClick={() => setPreviewImage(node.content || null)}
-                            className="w-full max-h-64 object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                            onClick={() => setPreviewImage(nodeMetadataObj.rawOriginalUrl || nodeImageUrl || null)}
+                            className="w-full h-full max-h-[260px] object-contain rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
                           />
+                          {isRawFormat && (
+                            <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-rose-600/90 text-white text-[10px] font-black uppercase tracking-wider backdrop-blur-xs shadow-md">
+                              {rawBadgeText} RAW
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadMediaFile(
+                                nodeMetadataObj.rawOriginalUrl || nodeImageUrl,
+                                nodeMetadataObj.fileName || `${node.title || 'photo'}.jpg`
+                              );
+                            }}
+                            className="absolute bottom-2 right-2 px-2.5 py-1.5 rounded-xl bg-black/70 hover:bg-black/90 active:scale-95 text-white text-xs font-semibold backdrop-blur-md flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                            title="Download photo"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Download</span>
+                          </button>
                         </div>
                       )}
 
@@ -1948,22 +2261,39 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       {node.type === 'audio' && nodeMetadataObj.audioUrl && (
                         <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 space-y-2">
                           <div className="flex items-center justify-between">
-                            <button
-                              onClick={() => handlePlayAudio(node)}
-                              className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm active:scale-95 transition-all"
-                            >
-                              {playingAudioId === node.id ? (
-                                <>
-                                  <Pause className="w-3.5 h-3.5 fill-white" />
-                                  <span>Pause Audio</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Play className="w-3.5 h-3.5 fill-white" />
-                                  <span>Play Recording</span>
-                                </>
-                              )}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handlePlayAudio(node)}
+                                className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm active:scale-95 transition-all"
+                              >
+                                {playingAudioId === node.id ? (
+                                  <>
+                                    <Pause className="w-3.5 h-3.5 fill-white" />
+                                    <span>Pause Audio</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-3.5 h-3.5 fill-white" />
+                                    <span>Play Recording</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadMediaFile(
+                                    nodeMetadataObj.audioUrl,
+                                    nodeMetadataObj.audioName || `${node.title || 'voice-note'}.webm`
+                                  );
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-purple-200 dark:border-purple-800 hover:bg-purple-50 text-purple-700 dark:text-purple-300 font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                                title="Download audio recording"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Download</span>
+                              </button>
+                            </div>
                             <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1">
                               <Volume2 className="w-3.5 h-3.5" />
                               Voice Memo
@@ -2097,6 +2427,7 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
         serverUrl={config.serverUrl}
         initialNode={editingNode}
         defaultType={defaultBlockType}
+        isReadOnly={isViewer}
       />
 
       {/* Media Quick Capture Prompts Modal (Upload vs Take New) */}
@@ -2236,12 +2567,27 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
           onClick={() => setPreviewImage(null)}
         >
           <div className="relative max-w-full max-h-full">
-            <button
-              onClick={() => setPreviewImage(null)}
-              className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  downloadMediaFile(previewImage, 'eventspace-photo.jpg');
+                }}
+                className="w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition-colors"
+                title="Download photo"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <img
               src={previewImage}
               alt="Preview"

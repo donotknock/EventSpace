@@ -1547,7 +1547,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {openAccordions.aboutInfo && (
                   <div className="p-4 pt-1 border-t border-slate-100 dark:border-slate-700/60 space-y-3">
                     <div className="text-sm font-bold text-slate-900 dark:text-white">
-                      <strong>EventSpace Platform (v1.1.2)</strong>
+                      <strong>EventSpace Platform (v1.1.2a)</strong>
                     </div>
                     <div className="text-xs text-slate-600 dark:text-slate-300">
                       Created by donotknock

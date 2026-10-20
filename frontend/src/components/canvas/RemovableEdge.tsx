@@ -39,6 +39,7 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
 
   const handleSetStyle = (nextStyle: 'dashed' | 'solid') => (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     if (data?.onUpdateStyle && typeof data.onUpdateStyle === 'function') {
       data.onUpdateStyle(id, { lineStyle: nextStyle });
     }
@@ -46,6 +47,7 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
 
   const handleCycleWidth = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     let nextWidth = 2.5;
     if (currentWidth <= 1.8) nextWidth = 2.5;
     else if (currentWidth <= 3) nextWidth = 4;
@@ -58,6 +60,7 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
 
   const handleReverse = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     if (data?.onReverseDirection && typeof data.onReverseDirection === 'function') {
       data.onReverseDirection(id);
     }
@@ -65,9 +68,15 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     if (data?.onDelete && typeof data.onDelete === 'function') {
       data.onDelete(id);
     }
+  };
+
+  const preventGesture = (e: React.SyntheticEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
   };
 
   return (
@@ -96,14 +105,17 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
               pointerEvents: 'all',
             }}
             className="flex items-center gap-1.5 bg-slate-900 text-white border border-slate-700 rounded-lg px-2 py-1 shadow-xl pointer-events-auto nodrag nopan z-30 animate-fadeIn select-none"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
+            onClick={preventGesture}
+            onMouseDown={preventGesture}
+            onPointerDown={preventGesture}
           >
             {/* 1. Line Style Segmented Control: Dash vs Solid */}
             <div className="flex items-center rounded-md bg-slate-800/80 p-0.5 border border-slate-700/60">
               <button
                 type="button"
                 onClick={handleSetStyle('dashed')}
+                onMouseDown={preventGesture}
+                onPointerDown={preventGesture}
                 className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider transition-colors flex items-center gap-1 ${
                   isDashed
                     ? 'bg-blue-600 text-white shadow-sm'
@@ -117,6 +129,8 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
               <button
                 type="button"
                 onClick={handleSetStyle('solid')}
+                onMouseDown={preventGesture}
+                onPointerDown={preventGesture}
                 className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider transition-colors flex items-center gap-1 ${
                   !isDashed
                     ? 'bg-blue-600 text-white shadow-sm'
@@ -135,6 +149,8 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
             <button
               type="button"
               onClick={handleCycleWidth}
+              onMouseDown={preventGesture}
+              onPointerDown={preventGesture}
               className="px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-300 hover:text-white hover:bg-slate-800 transition-colors flex items-center gap-1"
               title={`Line Width: ${currentWidth === 1.5 ? 'Thin (1.5px)' : currentWidth === 4 ? 'Thick (4px)' : 'Medium (2.5px)'} - Click to cycle`}
             >
@@ -151,6 +167,8 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
             <button
               type="button"
               onClick={handleReverse}
+              onMouseDown={preventGesture}
+              onPointerDown={preventGesture}
               className="w-6 h-6 flex items-center justify-center rounded text-slate-300 hover:text-blue-400 hover:bg-slate-800 transition-colors"
               title="Reverse direction (swap source and target)"
               aria-label="Reverse direction"
@@ -164,6 +182,8 @@ export const RemovableEdge: React.FC<EdgeProps> = ({
             <button
               type="button"
               onClick={handleDelete}
+              onMouseDown={preventGesture}
+              onPointerDown={preventGesture}
               className="w-6 h-6 flex items-center justify-center rounded text-rose-400 hover:text-white hover:bg-rose-600 transition-colors"
               title="Delete connector"
               aria-label="Delete connector"

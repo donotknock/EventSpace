@@ -94,8 +94,8 @@ edgesRouter.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /api/events/:eventId/edges/:id - Update edge properties (reverse, style, etc.)
-edgesRouter.patch('/:id', async (req: Request, res: Response) => {
+// PATCH or PUT /api/events/:eventId/edges/:id - Update edge properties (reverse, style, etc.)
+const handleUpdateEdge = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const eventId = req.params.eventId as string;
@@ -132,7 +132,10 @@ edgesRouter.patch('/:id', async (req: Request, res: Response) => {
     console.error('Failed to update edge:', error);
     res.status(500).json({ error: 'Failed to update edge' });
   }
-});
+};
+
+edgesRouter.patch('/:id', handleUpdateEdge);
+edgesRouter.put('/:id', handleUpdateEdge);
 
 // PUT /api/events/:eventId/edges/sync - Synchronize complete edge set
 edgesRouter.put('/sync', async (req: Request, res: Response) => {

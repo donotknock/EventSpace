@@ -344,22 +344,39 @@ const CanvasInner: React.FC<{
     [activeEvent.id, isReadOnly, setEdges]
   );
 
+  // Normalize handle ID to top | right | bottom | left
+  const normalizeHandleId = (
+    handleId?: string | null,
+    defaultFallback: 'top' | 'right' | 'bottom' | 'left' = 'bottom'
+  ): 'top' | 'right' | 'bottom' | 'left' => {
+    if (!handleId) return defaultFallback;
+    const cleaned = handleId
+      .replace(/^(source-|target-)/, '')
+      .replace(/(-source|-target)$/, '')
+      .trim()
+      .toLowerCase();
+    if (cleaned === 'top' || cleaned === 'right' || cleaned === 'bottom' || cleaned === 'left') {
+      return cleaned;
+    }
+    return defaultFallback;
+  };
+
   // Handle edge reversal (swap source and target)
   const handleReverseEdge = useCallback(
     async (edgeId: string) => {
       if (isReadOnly) return;
       let reversedSource = '';
       let reversedTarget = '';
-      let reversedSourceHandle: string | undefined = undefined;
-      let reversedTargetHandle: string | undefined = undefined;
+      let reversedSourceHandle: 'top' | 'right' | 'bottom' | 'left' = 'bottom';
+      let reversedTargetHandle: 'top' | 'right' | 'bottom' | 'left' = 'top';
 
       setEdges((eds) =>
         eds.map((e) => {
           if (e.id !== edgeId) return e;
           reversedSource = e.target;
           reversedTarget = e.source;
-          reversedSourceHandle = e.targetHandle || undefined;
-          reversedTargetHandle = e.sourceHandle || undefined;
+          reversedSourceHandle = normalizeHandleId(e.targetHandle, 'bottom');
+          reversedTargetHandle = normalizeHandleId(e.sourceHandle, 'top');
 
           const newSourceNode =
             (activeEvent.nodes || []).find((n) => n.id === reversedSource) ||
@@ -394,8 +411,8 @@ const CanvasInner: React.FC<{
           await api.updateEdge(activeEvent.id, edgeId, {
             sourceId: reversedSource,
             targetId: reversedTarget,
-            sourceHandle: reversedSourceHandle || null,
-            targetHandle: reversedTargetHandle || null,
+            sourceHandle: reversedSourceHandle,
+            targetHandle: reversedTargetHandle,
           });
         } catch (err) {
           console.error('Failed to reverse edge direction:', err);

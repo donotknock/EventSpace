@@ -52,7 +52,7 @@ backupRouter.get('/export', async (req: Request, res: Response) => {
     ]);
 
     const backupData = {
-      version: '1.1.2',
+      version: '1.1.2a',
       timestamp: new Date().toISOString(),
       generator: 'EventSpace Backup System',
       data: {

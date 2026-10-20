@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Circle,
   Copy,
+  Download,
 } from 'lucide-react';
 import { CanvasNodeItem } from '../../types';
 import { formatMonthDay } from '../../utils/date';
@@ -31,6 +32,7 @@ import {
   formatSummaryAsBullets,
 } from '../../utils/transcription';
 import { AutoLinkText } from '../../utils/linkify';
+import { downloadMediaFile } from '../../utils/mediaDownload';
 
 export const AudioNode: React.FC<NodeProps> = (props) => {
   const nodeData = props.data as unknown as {
@@ -484,32 +486,49 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
             </span>
           </div>
 
-          {/* Right side: 1. Duplicate & Delete (hover only), 2. Date (conditional visibility) */}
-          <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+          {/* Right side: Hover action container (Download, Duplicate, Delete) + Date */}
+          <div className="flex items-center gap-1.5 ml-auto shrink-0">
             {/* Action buttons inside hover-only wrapper */}
-            <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150">
-              {/* 1. Duplicate button */}
+            <div className="flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-150">
+              {/* 1. Download Media button (visible on hover for ALL roles including Viewer whenever audio exists) */}
+              {audioUrl && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    downloadMediaFile(audioUrl, metadataObj.audioName || `${node.title || 'voice-note'}.webm`);
+                  }}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/50 transition-all cursor-pointer pointer-events-auto"
+                  title="Download audio recording"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {/* 2. Duplicate button (non-Viewers) */}
               {!isReadOnly && onDuplicate && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDuplicate(props.id);
                   }}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/50 transition-all"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-950/50 transition-all pointer-events-auto"
                   title="Duplicate block"
                 >
                   <Copy className="w-3.5 h-3.5" />
                 </button>
               )}
 
-              {/* 2. Delete button */}
+              {/* 3. Delete button (non-Viewers) */}
               {!isReadOnly && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDelete(props.id);
                   }}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 transition-all pointer-events-auto"
                   title="Delete node"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -517,7 +536,7 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
               )}
             </div>
 
-            {/* 3. Date picker badge at far right */}
+            {/* 4. Date picker badge at far right */}
             <div
               className={`nodrag nopan order-last ${
                 dateValue
@@ -640,6 +659,17 @@ export const AudioNode: React.FC<NodeProps> = (props) => {
                   </div>
 
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadMediaFile(audioUrl, metadataObj.audioName || `${node.title || 'voice-note'}.webm`);
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer"
+                      title="Download audio recording"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
                     <button
                       onClick={handleRunTranscription}
                       disabled={isTranscribing}

@@ -308,7 +308,7 @@ export function exportEventToPdf(event: FullEventDetails) {
         ${frictionLogsHtml}
 
         <div class="footer">
-          Generated with EventSpace v1.1.2 on ${new Date().toLocaleString()} • https://donotknock.app/apps/eventspace/
+          Generated with EventSpace v1.1.2a on ${new Date().toLocaleString()} • https://donotknock.app/apps/eventspace/
         </div>
 
         <script>

@@ -49,6 +49,7 @@ interface BlockModalProps {
   initialNode?: CanvasNodeItem | null;
   defaultType?: NodeType;
   serverUrl?: string;
+  isReadOnly?: boolean;
 }
 
 export const BlockModal: React.FC<BlockModalProps> = ({
@@ -59,6 +60,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
   initialNode,
   defaultType = 'task',
   serverUrl,
+  isReadOnly = false,
 }) => {
   const enablePriority = getStoredPriorityEnabled();
   const checkboxStyles = getStoredCheckboxStyles();
@@ -171,8 +173,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
     setEditingSubtaskText('');
     setIsAddingNewVenue(false);
     setNewVenueName('');
-    setError(null);
-  }, [initialNode, isOpen, defaultType, enabledStyles]);
+  }, [initialNode?.id, isOpen]);
 
   if (!isOpen) return null;
 
@@ -420,10 +421,13 @@ export const BlockModal: React.FC<BlockModalProps> = ({
             <input
               type="text"
               required
+              disabled={isReadOnly}
+              readOnly={isReadOnly}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              onTouchStart={(e) => e.stopPropagation()}
               placeholder="e.g., Finalize Stage Lighting"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/40 text-slate-900 dark:text-white"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/40 text-slate-900 dark:text-white select-text"
             />
           </div>
 
@@ -506,9 +510,11 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                   </label>
                   <input
                     type="time"
+                    disabled={isReadOnly}
                     value={setupTime}
                     onChange={(e) => setSetupTime(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                    onTouchStart={(e) => e.stopPropagation()}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white select-text"
                   />
                 </div>
 
@@ -519,9 +525,11 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                   </label>
                   <input
                     type="time"
+                    disabled={isReadOnly}
                     value={teardownTime}
                     onChange={(e) => setTeardownTime(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                    onTouchStart={(e) => e.stopPropagation()}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white select-text"
                   />
                 </div>
               </div>
@@ -534,10 +542,12 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  disabled={isReadOnly}
                   value={contactPerson}
                   onChange={(e) => setContactPerson(e.target.value)}
+                  onTouchStart={(e) => e.stopPropagation()}
                   placeholder="e.g. Venue Manager, Phone #..."
-                  className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                  className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white select-text"
                 />
               </div>
             </div>
@@ -549,22 +559,27 @@ export const BlockModal: React.FC<BlockModalProps> = ({
               <label className="block font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 text-[10px]">
                 {type === 'venue' ? 'Venue Notes & Logistics' : 'Details / Description'}
               </label>
-              <button
-                type="button"
-                onClick={() => {
-                  const tableTemplate = `\n| Item | Specification | Status |\n| --- | --- | --- |\n| Item 1 | Detail 1 | Ready |\n| Item 2 | Detail 2 | Pending |\n`;
-                  setContent((prev) => (prev ? `${prev.trim()}\n${tableTemplate}` : tableTemplate.trim()));
-                }}
-                className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
-              >
-                <Table className="w-3 h-3" />
-                <span>+ Insert Table</span>
-              </button>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tableTemplate = `\n| Item | Specification | Status |\n| --- | --- | --- |\n| Item 1 | Detail 1 | Ready |\n| Item 2 | Detail 2 | Pending |\n`;
+                    setContent((prev) => (prev ? `${prev.trim()}\n${tableTemplate}` : tableTemplate.trim()));
+                  }}
+                  className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                >
+                  <Table className="w-3 h-3" />
+                  <span>+ Insert Table</span>
+                </button>
+              )}
             </div>
             <textarea
               rows={type === 'venue' ? 2 : 4}
+              disabled={isReadOnly}
+              readOnly={isReadOnly}
               value={content}
               onChange={(e) => setContent(e.target.value)}
+              onTouchStart={(e) => e.stopPropagation()}
               onPaste={(e) => {
                 const pasteText = e.clipboardData.getData('text');
                 if (pasteText && pasteText.includes('\t') && pasteText.includes('\n')) {
@@ -584,7 +599,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                   ? "Add information or paste spreadsheets (Excel/Sheets)... Use '+ Insert Table' to format."
                   : 'Add additional details, links, or instructions...'
               }
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40 text-slate-900 dark:text-white font-mono"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40 text-slate-900 dark:text-white font-mono select-text"
             />
 
             {/* Table preview if content contains table */}
@@ -637,6 +652,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                               type="text"
                               value={editingSubtaskText}
                               onChange={(e) => setEditingSubtaskText(e.target.value)}
+                              onTouchStart={(e) => e.stopPropagation()}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                   e.preventDefault();
@@ -645,7 +661,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                                   setEditingSubtaskIndex(null);
                                 }
                               }}
-                              className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-500 text-xs text-slate-900 dark:text-white focus:outline-none ring-1 ring-blue-500"
+                              className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-500 text-xs text-slate-900 dark:text-white focus:outline-none ring-1 ring-blue-500 select-text"
                               autoFocus
                             />
                             <button
@@ -809,8 +825,10 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                 <div className="flex items-center gap-1.5">
                   <input
                     type="text"
+                    disabled={isReadOnly}
                     value={newSubtaskText}
                     onChange={(e) => setNewSubtaskText(e.target.value)}
+                    onTouchStart={(e) => e.stopPropagation()}
                     placeholder="New subtask text..."
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -818,7 +836,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                         handleAddSubtask();
                       }
                     }}
-                    className="flex-1 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
+                    className="flex-1 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none select-text"
                   />
 
                   <div className="shrink-0">
@@ -828,18 +846,20 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                       placeholder="+ Date"
                       size="sm"
                       align="right"
-                      disabled={['dot', 'dash', 'arrow', 'starred', 'bullet'].includes(newSubtaskStyle)}
+                      disabled={isReadOnly || ['dot', 'dash', 'arrow', 'starred', 'bullet'].includes(newSubtaskStyle)}
                     />
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleAddSubtask}
-                    disabled={!newSubtaskText.trim()}
-                    className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold disabled:opacity-40 shadow-sm shrink-0"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={handleAddSubtask}
+                      disabled={!newSubtaskText.trim()}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold disabled:opacity-40 shadow-sm shrink-0"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -857,6 +877,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                     <button
                       type="button"
                       key={p}
+                      disabled={isReadOnly}
                       onClick={() => setPriority(priority === p ? null : p)}
                       className={`flex-1 py-1.5 rounded-lg border font-bold uppercase text-[10px] transition-all ${
                         priority === p
@@ -883,6 +904,7 @@ export const BlockModal: React.FC<BlockModalProps> = ({
                 value={dueDate}
                 onChange={(val) => setDueDate(val || '')}
                 placeholder="Set due date..."
+                disabled={isReadOnly}
               />
             </div>
           </div>
@@ -894,10 +916,13 @@ export const BlockModal: React.FC<BlockModalProps> = ({
             </label>
             <input
               type="text"
+              disabled={isReadOnly}
+              readOnly={isReadOnly}
               value={assignee}
               onChange={(e) => setAssignee(e.target.value)}
+              onTouchStart={(e) => e.stopPropagation()}
               placeholder="e.g., Clara or Audio Tech"
-              className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none"
+              className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none select-text"
             />
           </div>
 
@@ -907,15 +932,17 @@ export const BlockModal: React.FC<BlockModalProps> = ({
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
             >
-              Cancel
+              {isReadOnly ? 'Close' : 'Cancel'}
             </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 disabled:opacity-50"
-            >
-              {isSubmitting ? 'Saving...' : initialNode ? 'Update Block' : 'Create Block'}
-            </button>
+            {!isReadOnly && (
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20 disabled:opacity-50"
+              >
+                {isSubmitting ? 'Saving...' : initialNode ? 'Update Block' : 'Create Block'}
+              </button>
+            )}
           </div>
         </form>
       </div>
